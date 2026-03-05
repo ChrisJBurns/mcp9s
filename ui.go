@@ -508,7 +508,7 @@ func (m model) renderDetail() string {
 	}
 
 	// Top panel — full width
-	topTitle := tableTitleStyle.Render("Server") +
+	topTitle := tableTitleStyle.Render("Tools") +
 		lipgloss.NewStyle().Foreground(colorAqua).Render("[") +
 		tableTitleCountStyle.Render(s.name) +
 		lipgloss.NewStyle().Foreground(colorAqua).Render("]")
@@ -522,11 +522,11 @@ func (m model) renderDetail() string {
 	leftInnerW := bottomTotalInner / 2
 	rightInnerW := bottomTotalInner - leftInnerW
 
-	leftTitle := tableTitleStyle.Render("Tools")
+	leftTitle := tableTitleStyle.Render("Request")
 	leftContent := m.padToHeight("", bottomH)
 	leftBox := m.renderBorderedBox(leftContent, leftTitle, leftInnerW)
 
-	rightTitle := tableTitleStyle.Render("Resources")
+	rightTitle := tableTitleStyle.Render("Response")
 	rightContent := m.padToHeight("", bottomH)
 	rightBox := m.renderBorderedBox(rightContent, rightTitle, rightInnerW)
 
