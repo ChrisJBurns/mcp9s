@@ -26,9 +26,15 @@ type mcpTool struct {
 	Params      []toolParam
 }
 
-// fetchTools connects to the MCP server at the given URL and returns its tools.
-// It tries Streamable HTTP first, then falls back to SSE if that fails.
-func fetchTools(serverURL string) ([]mcpTool, error) {
+// fetchToolsResult holds the tools and session ID from a successful fetch.
+type fetchToolsResult struct {
+	tools     []mcpTool
+	sessionID string
+}
+
+// fetchTools connects to the MCP server at the given URL and returns its tools
+// along with the session ID from the initialized connection.
+func fetchTools(serverURL string) (*fetchToolsResult, error) {
 	cleanURL := stripFragment(serverURL)
 
 	transports := []mcp.Transport{
@@ -42,9 +48,9 @@ func fetchTools(serverURL string) ([]mcpTool, error) {
 
 	var lastErr error
 	for _, transport := range transports {
-		tools, err := tryFetchTools(transport)
+		result, err := tryFetchTools(transport)
 		if err == nil {
-			return tools, nil
+			return result, nil
 		}
 		lastErr = err
 	}
@@ -75,7 +81,7 @@ func callTool(serverURL, toolName string, args map[string]any) (string, error) {
 	return "", lastErr
 }
 
-func tryFetchTools(transport mcp.Transport) ([]mcpTool, error) {
+func tryFetchTools(transport mcp.Transport) (*fetchToolsResult, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -89,6 +95,8 @@ func tryFetchTools(transport mcp.Transport) ([]mcpTool, error) {
 		return nil, err
 	}
 	defer session.Close()
+
+	sessionID := session.ID()
 
 	result, err := session.ListTools(ctx, &mcp.ListToolsParams{})
 	if err != nil {
@@ -108,7 +116,7 @@ func tryFetchTools(transport mcp.Transport) ([]mcpTool, error) {
 		})
 	}
 
-	return tools, nil
+	return &fetchToolsResult{tools: tools, sessionID: sessionID}, nil
 }
 
 func tryCallTool(transport mcp.Transport, toolName string, args map[string]any) (string, error) {
@@ -227,70 +235,31 @@ func buildArgs(params []toolParam, values []string) map[string]any {
 	return args
 }
 
-// buildCurl generates a shell script that performs the full MCP handshake
-// (initialize → initialized notification → tools/call) via curl.
-func buildCurl(serverURL, toolName string, args map[string]any) string {
-	callParams := map[string]any{
+// buildCurl generates a single curl command for an MCP tools/call request,
+// using the session ID from the already-initialized connection.
+func buildCurl(serverURL, sessionID, toolName string, args map[string]any) string {
+	params := map[string]any{
 		"name": toolName,
 	}
 	if len(args) > 0 {
-		callParams["arguments"] = args
+		params["arguments"] = args
 	}
 
-	initBody, _ := json.Marshal(map[string]any{
+	body, _ := json.MarshalIndent(map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
-		"method":  "initialize",
-		"params": map[string]any{
-			"protocolVersion": "2025-03-26",
-			"clientInfo": map[string]any{
-				"name":    "mcp9s",
-				"version": "0.1.0",
-			},
-			"capabilities": map[string]any{},
-		},
-	})
-
-	notifyBody, _ := json.Marshal(map[string]any{
-		"jsonrpc": "2.0",
-		"method":  "notifications/initialized",
-	})
-
-	callBody, _ := json.MarshalIndent(map[string]any{
-		"jsonrpc": "2.0",
-		"id":      2,
 		"method":  "tools/call",
-		"params":  callParams,
+		"params":  params,
 	}, "", "  ")
 
 	var b strings.Builder
-	b.WriteString("#!/bin/bash\n")
-	b.WriteString(fmt.Sprintf("URL='%s'\n\n", serverURL))
-
-	// Step 1: Initialize and capture session ID
-	b.WriteString("# Initialize session\n")
-	b.WriteString(fmt.Sprintf("SESSION=$(curl -s -D - -X POST \"$URL\" \\\n"))
-	b.WriteString("  -H 'Content-Type: application/json' \\\n")
-	b.WriteString("  -H 'Accept: application/json' \\\n")
-	b.WriteString(fmt.Sprintf("  -d '%s' \\\n", string(initBody)))
-	b.WriteString("  | grep -i 'mcp-session-id' | tr -d '\\r' | awk '{print $2}')\n\n")
-
-	b.WriteString("echo \"Session ID: $SESSION\"\n\n")
-
-	// Step 2: Send initialized notification
-	b.WriteString("# Send initialized notification\n")
-	b.WriteString("curl -s -X POST \"$URL\" \\\n")
-	b.WriteString("  -H 'Content-Type: application/json' \\\n")
-	b.WriteString("  -H \"Mcp-Session-Id: $SESSION\" \\\n")
-	b.WriteString(fmt.Sprintf("  -d '%s'\n\n", string(notifyBody)))
-
-	// Step 3: Call tool
-	b.WriteString("# Call tool\n")
-	b.WriteString("curl -s -X POST \"$URL\" \\\n")
-	b.WriteString("  -H 'Content-Type: application/json' \\\n")
-	b.WriteString("  -H 'Accept: application/json' \\\n")
-	b.WriteString("  -H \"Mcp-Session-Id: $SESSION\" \\\n")
-	b.WriteString(fmt.Sprintf("  -d '%s'\n", string(callBody)))
+	b.WriteString(fmt.Sprintf("curl -s -X POST '%s'", serverURL))
+	b.WriteString(" \\\n  -H 'Content-Type: application/json'")
+	b.WriteString(" \\\n  -H 'Accept: application/json'")
+	if sessionID != "" {
+		b.WriteString(fmt.Sprintf(" \\\n  -H 'Mcp-Session-Id: %s'", sessionID))
+	}
+	b.WriteString(fmt.Sprintf(" \\\n  -d '%s'", string(body)))
 
 	return b.String()
 }
