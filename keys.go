@@ -15,7 +15,10 @@ type keyMap struct {
 	Back     key.Binding
 	Quit     key.Binding
 	ForceQ   key.Binding
-	Copy     key.Binding
+	Copy       key.Binding
+	Exec       key.Binding
+	ScrollUp   key.Binding
+	ScrollDown key.Binding
 }
 
 var keys = keyMap{
@@ -70,6 +73,17 @@ var keys = keyMap{
 		key.WithKeys("c"),
 		key.WithHelp("c", "Copy request"),
 	),
+	Exec: key.NewBinding(
+		key.WithKeys("e"),
+		key.WithHelp("e", "Execute"),
+	),
+	ScrollUp: key.NewBinding(
+		key.WithKeys("["),
+		key.WithHelp("[/]", "Scroll response"),
+	),
+	ScrollDown: key.NewBinding(
+		key.WithKeys("]"),
+	),
 }
 
 // hintBindings returns the key hints displayed in the header menu area.
@@ -79,6 +93,8 @@ func hintBindings(detail bool) []key.Binding {
 			keys.Back,
 			keys.Enter,
 			keys.Copy,
+			keys.Exec,
+			keys.ScrollUp,
 			keys.Quit,
 		}
 	}

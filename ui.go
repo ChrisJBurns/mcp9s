@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os/exec"
 	"regexp"
@@ -87,6 +88,8 @@ type model struct {
 	requestText     string
 	responseText    string
 	responseLoading bool
+	responseScroll  int
+	responseLines   []string // pre-rendered (highlighted + wrapped) response lines
 }
 
 func newModel(servers []serverEntry, clientCount int) model {
@@ -132,11 +135,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case callToolMsg:
 		m.responseLoading = false
+		m.responseScroll = 0
 		if msg.err != nil {
 			m.responseText = "Error: " + msg.err.Error()
 		} else {
 			m.responseText = msg.response
 		}
+		m.responseLines = nil // cleared; will be built on render
 		return m, nil
 
 	case tea.KeyMsg:
@@ -199,6 +204,8 @@ func (m model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.view = viewServers
 		m.toolCursor = 0
 		m.responseText = ""
+		m.responseLines = nil
+		m.responseScroll = 0
 		m.requestText = ""
 		if m.detailSession != nil {
 			m.detailSession.Close()
@@ -246,6 +253,22 @@ func (m model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.dialogOnOK = true
 			}
 			return m, textinput.Blink
+		}
+	case key.Matches(msg, keys.ScrollUp):
+		if m.responseScroll > 0 {
+			m.responseScroll--
+		}
+	case key.Matches(msg, keys.ScrollDown):
+		if m.responseText != "" {
+			m.responseScroll++
+		}
+	case key.Matches(msg, keys.Exec):
+		if m.requestText != "" && !m.responseLoading {
+			m.responseLoading = true
+			m.responseText = ""
+			m.responseLines = nil
+			m.responseScroll = 0
+			return m, m.execCurlCmd()
 		}
 	case key.Matches(msg, keys.Copy):
 		if m.requestText != "" {
@@ -419,6 +442,18 @@ func (m model) callToolCmd(tool *mcpTool, args map[string]any) tea.Cmd {
 	return func() tea.Msg {
 		response, err := callTool(serverURL, toolName, args)
 		return callToolMsg{response: response, err: err}
+	}
+}
+
+// execCurlCmd runs the request curl command and returns the output as a callToolMsg.
+func (m model) execCurlCmd() tea.Cmd {
+	curlText := m.requestText
+	return func() tea.Msg {
+		out, err := exec.Command("sh", "-c", curlText).CombinedOutput()
+		if err != nil {
+			return callToolMsg{err: fmt.Errorf("%s: %s", err, string(out))}
+		}
+		return callToolMsg{response: string(out)}
 	}
 }
 
@@ -843,14 +878,20 @@ func (m model) renderDetail() string {
 	if m.responseLoading {
 		rightLines = append(rightLines, detailValueStyle.Render("Calling tool..."))
 	} else if m.responseText != "" {
-		// Word-wrap response text to fit panel
-		for _, line := range strings.Split(m.responseText, "\n") {
-			for len(line) > rightInnerW {
-				rightLines = append(rightLines, line[:rightInnerW])
-				line = line[rightInnerW:]
-			}
-			rightLines = append(rightLines, line)
+		m.responseLines = buildResponseLines(m.responseText, rightInnerW)
+		// Clamp scroll
+		maxScroll := len(m.responseLines) - bottomH
+		if maxScroll < 0 {
+			maxScroll = 0
 		}
+		if m.responseScroll > maxScroll {
+			m.responseScroll = maxScroll
+		}
+		end := m.responseScroll + bottomH
+		if end > len(m.responseLines) {
+			end = len(m.responseLines)
+		}
+		rightLines = m.responseLines[m.responseScroll:end]
 	}
 	rightContent := m.padToHeight(strings.Join(rightLines, "\n"), bottomH)
 	rightBox := m.renderBorderedBox(rightContent, rightTitle, rightInnerW)
@@ -1163,4 +1204,115 @@ func copyToClipboard(text string) {
 	cmd := exec.Command("pbcopy")
 	cmd.Stdin = strings.NewReader(text)
 	_ = cmd.Run()
+}
+
+// buildResponseLines pretty-prints JSON (if valid) with syntax highlighting,
+// then word-wraps to fit the given width. Handles SSE "data: {...}" lines.
+func buildResponseLines(text string, width int) []string {
+	// Pre-process: extract JSON from SSE "data: " lines and join them
+	display := extractAndFormatJSON(text)
+
+	// Highlight then wrap
+	var lines []string
+	for _, raw := range strings.Split(display, "\n") {
+		// Wrap on raw length (visual width approximation)
+		if len(raw) <= width {
+			lines = append(lines, highlightJSONLine(raw))
+		} else {
+			for len(raw) > width {
+				lines = append(lines, highlightJSONLine(raw[:width]))
+				raw = raw[width:]
+			}
+			lines = append(lines, highlightJSONLine(raw))
+		}
+	}
+	return lines
+}
+
+// extractAndFormatJSON tries to find and pretty-print JSON from the response.
+// It handles raw JSON, SSE "data: {json}" lines, and mixed content.
+func extractAndFormatJSON(text string) string {
+	// First try: raw JSON
+	var buf json.RawMessage
+	if json.Unmarshal([]byte(text), &buf) == nil {
+		if pretty, err := json.MarshalIndent(buf, "", "  "); err == nil {
+			return string(pretty)
+		}
+	}
+
+	// Second try: extract JSON from SSE "data: " lines
+	var jsonParts []string
+	var otherParts []string
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "data: ") {
+			payload := strings.TrimPrefix(trimmed, "data: ")
+			if json.Unmarshal([]byte(payload), &buf) == nil {
+				if pretty, err := json.MarshalIndent(buf, "", "  "); err == nil {
+					jsonParts = append(jsonParts, string(pretty))
+					continue
+				}
+			}
+			// data: line but not valid JSON
+			otherParts = append(otherParts, line)
+		} else if trimmed == "" {
+			// skip empty SSE separator lines
+			continue
+		} else {
+			otherParts = append(otherParts, line)
+		}
+	}
+
+	if len(jsonParts) > 0 {
+		all := append(otherParts, jsonParts...)
+		return strings.Join(all, "\n")
+	}
+
+	return text
+}
+
+var jsonLineRe = regexp.MustCompile(`^(\s*)("(?:[^"\\]|\\.)*")\s*:\s*(.*)$`)
+
+// highlightJSONLine applies k9s-themed colors to a single JSON line.
+func highlightJSONLine(line string) string {
+	keyStyle := lipgloss.NewStyle().Foreground(colorDodgerBlue).Bold(true)
+	strStyle := lipgloss.NewStyle().Foreground(colorPaleGreen)
+	numStyle := lipgloss.NewStyle().Foreground(colorFuchsia)
+	boolStyle := lipgloss.NewStyle().Foreground(colorDarkOrange).Bold(true)
+	nullStyle := lipgloss.NewStyle().Foreground(colorLightSlateGray)
+	punctStyle := lipgloss.NewStyle().Foreground(colorLightSkyBlue)
+
+	// Match "key": value lines
+	if m := jsonLineRe.FindStringSubmatch(line); m != nil {
+		indent := m[1]
+		k := m[2]
+		v := strings.TrimRight(m[3], " ")
+		return indent + keyStyle.Render(k) + punctStyle.Render(": ") + colorJSONValue(v, strStyle, numStyle, boolStyle, nullStyle, punctStyle)
+	}
+
+	// Standalone values (array elements, closing braces, etc.)
+	trimmed := strings.TrimSpace(line)
+	indent := line[:len(line)-len(strings.TrimLeft(line, " \t"))]
+	return indent + colorJSONValue(trimmed, strStyle, numStyle, boolStyle, nullStyle, punctStyle)
+}
+
+func colorJSONValue(v string, strStyle, numStyle, boolStyle, nullStyle, punctStyle lipgloss.Style) string {
+	clean := strings.TrimRight(v, ",")
+	trailing := v[len(clean):]
+
+	switch {
+	case strings.HasPrefix(clean, "\""):
+		return strStyle.Render(clean) + punctStyle.Render(trailing)
+	case clean == "true" || clean == "false":
+		return boolStyle.Render(clean) + punctStyle.Render(trailing)
+	case clean == "null":
+		return nullStyle.Render(clean) + punctStyle.Render(trailing)
+	case clean == "{" || clean == "}" || clean == "[" || clean == "]" ||
+		clean == "{}" || clean == "[]":
+		return punctStyle.Render(clean) + punctStyle.Render(trailing)
+	case len(clean) > 0 && (clean[0] >= '0' && clean[0] <= '9' || clean[0] == '-'):
+		return numStyle.Render(clean) + punctStyle.Render(trailing)
+	default:
+		return detailValueStyle.Render(v)
+	}
 }
