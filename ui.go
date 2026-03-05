@@ -1162,6 +1162,14 @@ func (m model) renderBorderedBox(content, title string, innerWidth int) string {
 	var result []string
 	result = append(result, topBorder)
 	for _, line := range contentLines {
+		// Truncate lines that exceed inner width to prevent layout corruption
+		if lipgloss.Width(line) > innerWidth {
+			runes := []rune(line)
+			for lipgloss.Width(string(runes)) > innerWidth && len(runes) > 0 {
+				runes = runes[:len(runes)-1]
+			}
+			line = string(runes)
+		}
 		paddedLine := padRight(line, innerWidth)
 		result = append(result, bc.Render(v)+" "+paddedLine+" "+bc.Render(v))
 	}
@@ -1212,21 +1220,46 @@ func buildResponseLines(text string, width int) []string {
 	// Pre-process: extract JSON from SSE "data: " lines and join them
 	display := extractAndFormatJSON(text)
 
-	// Highlight then wrap
+	// Highlight then wrap using visual width
 	var lines []string
 	for _, raw := range strings.Split(display, "\n") {
-		// Wrap on raw length (visual width approximation)
-		if len(raw) <= width {
-			lines = append(lines, highlightJSONLine(raw))
-		} else {
-			for len(raw) > width {
-				lines = append(lines, highlightJSONLine(raw[:width]))
-				raw = raw[width:]
-			}
-			lines = append(lines, highlightJSONLine(raw))
+		wrapped := wrapLine(raw, width)
+		for _, chunk := range wrapped {
+			lines = append(lines, highlightJSONLine(chunk))
 		}
 	}
 	return lines
+}
+
+// wrapLine splits a string into chunks that fit within the given visual width.
+func wrapLine(s string, width int) []string {
+	if width <= 0 {
+		return []string{s}
+	}
+	if lipgloss.Width(s) <= width {
+		return []string{s}
+	}
+	var result []string
+	runes := []rune(s)
+	for len(runes) > 0 {
+		// Binary-ish search: start from min(width, len) and shrink if needed
+		cut := width
+		if cut > len(runes) {
+			cut = len(runes)
+		}
+		for cut > 1 && lipgloss.Width(string(runes[:cut])) > width {
+			cut--
+		}
+		if cut == 0 {
+			cut = 1
+		}
+		result = append(result, string(runes[:cut]))
+		runes = runes[cut:]
+	}
+	if len(result) == 0 {
+		result = []string{""}
+	}
+	return result
 }
 
 // extractAndFormatJSON tries to find and pretty-print JSON from the response.
