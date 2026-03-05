@@ -45,6 +45,12 @@ type toolsMsg struct {
 	err        error
 }
 
+// callToolMsg is sent when a tool call completes.
+type callToolMsg struct {
+	response string
+	err      error
+}
+
 type model struct {
 	allServers  []serverEntry
 	filtered    []serverEntry
@@ -65,6 +71,18 @@ type model struct {
 	detailLoading  bool
 	detailError    string
 	detailServerNm string
+	toolCursor     int
+
+	// Tool call dialog
+	showToolDialog   bool
+	dialogParamIdx   int
+	dialogInputs     []string
+	dialogTool       *mcpTool
+	dialogCalling    bool
+
+	// Response panel
+	responseText    string
+	responseLoading bool
 }
 
 func newModel(servers []serverEntry, clientCount int) model {
@@ -107,6 +125,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case callToolMsg:
+		m.responseLoading = false
+		m.dialogCalling = false
+		if msg.err != nil {
+			m.responseText = "Error: " + msg.err.Error()
+		} else {
+			m.responseText = msg.response
+		}
+		return m, nil
+
 	case tea.KeyMsg:
 		if key.Matches(msg, keys.ForceQ) {
 			return m, tea.Quit
@@ -114,6 +142,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.showHelp {
 			m.showHelp = false
 			return m, nil
+		}
+		if m.showToolDialog {
+			return m.updateToolDialog(msg)
 		}
 		if m.inputMode != inputNone {
 			return m.updateInput(msg)
@@ -162,6 +193,41 @@ func (m model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, keys.Back), key.Matches(msg, keys.Quit):
 		m.view = viewServers
+		m.toolCursor = 0
+		m.responseText = ""
+	case key.Matches(msg, keys.Up):
+		if m.toolCursor > 0 {
+			m.toolCursor--
+		}
+	case key.Matches(msg, keys.Down):
+		if m.toolCursor < len(m.detailTools)-1 {
+			m.toolCursor++
+		}
+	case key.Matches(msg, keys.Top):
+		m.toolCursor = 0
+	case key.Matches(msg, keys.Bottom):
+		if len(m.detailTools) > 0 {
+			m.toolCursor = len(m.detailTools) - 1
+		}
+	case key.Matches(msg, keys.Enter):
+		if m.toolCursor < len(m.detailTools) {
+			tool := &m.detailTools[m.toolCursor]
+			if len(tool.Params) == 0 {
+				// No params — call immediately
+				m.responseText = ""
+				m.responseLoading = true
+				return m, m.callToolCmd(tool, nil)
+			}
+			m.dialogTool = tool
+			m.dialogInputs = make([]string, len(tool.Params))
+			m.dialogParamIdx = 0
+			m.showToolDialog = true
+			m.textInput.Prompt = ""
+			m.textInput.Placeholder = tool.Params[0].Name
+			m.textInput.SetValue("")
+			m.textInput.Focus()
+			return m, textinput.Blink
+		}
 	case key.Matches(msg, keys.Command):
 		m.inputMode = inputCommand
 		m.textInput.Prompt = "> "
@@ -173,6 +239,66 @@ func (m model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.showHelp = true
 	}
 	return m, nil
+}
+
+func (m model) updateToolDialog(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.dialogCalling {
+		return m, nil
+	}
+
+	switch msg.Type {
+	case tea.KeyEsc:
+		m.showToolDialog = false
+		m.textInput.Blur()
+		return m, nil
+
+	case tea.KeyEnter:
+		// Save current param value
+		m.dialogInputs[m.dialogParamIdx] = m.textInput.Value()
+
+		// Move to next param or submit
+		if m.dialogParamIdx < len(m.dialogTool.Params)-1 {
+			m.dialogParamIdx++
+			p := m.dialogTool.Params[m.dialogParamIdx]
+			m.textInput.Placeholder = p.Name
+			m.textInput.SetValue(m.dialogInputs[m.dialogParamIdx])
+			return m, nil
+		}
+
+		// All params filled — call the tool
+		m.showToolDialog = false
+		m.textInput.Blur()
+		m.responseText = ""
+		m.responseLoading = true
+		args := buildArgs(m.dialogTool.Params, m.dialogInputs)
+		return m, m.callToolCmd(m.dialogTool, args)
+
+	case tea.KeyShiftTab, tea.KeyUp:
+		// Navigate to previous param
+		if m.dialogParamIdx > 0 {
+			m.dialogInputs[m.dialogParamIdx] = m.textInput.Value()
+			m.dialogParamIdx--
+			p := m.dialogTool.Params[m.dialogParamIdx]
+			m.textInput.Placeholder = p.Name
+			m.textInput.SetValue(m.dialogInputs[m.dialogParamIdx])
+		}
+		return m, nil
+
+	case tea.KeyTab, tea.KeyDown:
+		// Navigate to next param
+		if m.dialogParamIdx < len(m.dialogTool.Params)-1 {
+			m.dialogInputs[m.dialogParamIdx] = m.textInput.Value()
+			m.dialogParamIdx++
+			p := m.dialogTool.Params[m.dialogParamIdx]
+			m.textInput.Placeholder = p.Name
+			m.textInput.SetValue(m.dialogInputs[m.dialogParamIdx])
+		}
+		return m, nil
+	}
+
+	var cmd tea.Cmd
+	m.textInput, cmd = m.textInput.Update(msg)
+	return m, cmd
 }
 
 func (m model) updateServers(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -227,6 +353,18 @@ func (m model) fetchToolsCmd(s serverEntry) tea.Cmd {
 	return func() tea.Msg {
 		tools, err := fetchTools(s.server.URL)
 		return toolsMsg{serverName: s.name, tools: tools, err: err}
+	}
+}
+
+func (m model) callToolCmd(tool *mcpTool, args map[string]any) tea.Cmd {
+	serverURL := ""
+	if m.cursor < len(m.filtered) {
+		serverURL = m.filtered[m.cursor].server.URL
+	}
+	toolName := tool.Name
+	return func() tea.Msg {
+		response, err := callTool(serverURL, toolName, args)
+		return callToolMsg{response: response, err: err}
 	}
 }
 
@@ -326,6 +464,10 @@ func (m model) View() string {
 		lines = lines[:m.height]
 	}
 	result := strings.Join(lines, "\n")
+
+	if m.showToolDialog {
+		return m.overlayCenter(result, m.renderToolDialog())
+	}
 
 	if m.showHelp {
 		return m.overlayCenter(result, m.renderHelp())
@@ -573,10 +715,30 @@ func (m model) renderDetail() string {
 		topLines = append(topLines,
 			tableHeaderStyle.Render(padRight("NAME", nameColW))+
 				tableHeaderStyle.Render(padRight("DESCRIPTION", descColW)))
-		for _, t := range m.detailTools {
+
+		// Scrolling window for tools
+		dataRows := topH - 1 // minus header
+		if dataRows < 1 {
+			dataRows = 1
+		}
+		start := 0
+		if m.toolCursor >= dataRows {
+			start = m.toolCursor - dataRows + 1
+		}
+		end := start + dataRows
+		if end > toolCount {
+			end = toolCount
+		}
+
+		for i := start; i < end; i++ {
+			t := m.detailTools[i]
+			style := tableRowStyle
+			if i == m.toolCursor {
+				style = tableSelectedStyle
+			}
 			topLines = append(topLines,
-				tableRowStyle.Render(padRight(truncate(t.Name, nameColW), nameColW))+
-					tableRowStyle.Render(padRight(truncate(t.Description, descColW), descColW)))
+				style.Render(padRight(truncate(t.Name, nameColW), nameColW))+
+					style.Render(padRight(truncate(t.Description, descColW), descColW)))
 		}
 	}
 	topContent := m.padToHeight(strings.Join(topLines, "\n"), topH)
@@ -589,12 +751,48 @@ func (m model) renderDetail() string {
 	leftInnerW := bottomTotalInner / 2
 	rightInnerW := bottomTotalInner - leftInnerW
 
+	// Request panel — show selected tool's parameters
 	leftTitle := tableTitleStyle.Render("Request")
-	leftContent := m.padToHeight("", bottomH)
+	var leftLines []string
+	if m.toolCursor < len(m.detailTools) {
+		tool := m.detailTools[m.toolCursor]
+		if len(tool.Params) == 0 {
+			leftLines = append(leftLines, detailValueStyle.Render("No parameters"))
+		} else {
+			for _, p := range tool.Params {
+				req := ""
+				if p.Required {
+					req = lipgloss.NewStyle().Foreground(colorOrangeRed).Render("*")
+				}
+				line := detailKeyStyle.Render(p.Name) + req +
+					detailColonStyle.Render(": ") +
+					lipgloss.NewStyle().Foreground(colorLightSlateGray).Render(p.Type)
+				leftLines = append(leftLines, line)
+				if p.Description != "" {
+					leftLines = append(leftLines, "  "+detailValueStyle.Render(truncate(p.Description, leftInnerW-2)))
+				}
+			}
+		}
+	}
+	leftContent := m.padToHeight(strings.Join(leftLines, "\n"), bottomH)
 	leftBox := m.renderBorderedBox(leftContent, leftTitle, leftInnerW)
 
+	// Response panel
 	rightTitle := tableTitleStyle.Render("Response")
-	rightContent := m.padToHeight("", bottomH)
+	var rightLines []string
+	if m.responseLoading {
+		rightLines = append(rightLines, detailValueStyle.Render("Calling tool..."))
+	} else if m.responseText != "" {
+		// Word-wrap response text to fit panel
+		for _, line := range strings.Split(m.responseText, "\n") {
+			for len(line) > rightInnerW {
+				rightLines = append(rightLines, line[:rightInnerW])
+				line = line[rightInnerW:]
+			}
+			rightLines = append(rightLines, line)
+		}
+	}
+	rightContent := m.padToHeight(strings.Join(rightLines, "\n"), bottomH)
 	rightBox := m.renderBorderedBox(rightContent, rightTitle, rightInnerW)
 
 	// Join left and right boxes side-by-side
@@ -670,6 +868,60 @@ func (m model) renderCrumbs() string {
 		rightPad = 0
 	}
 	return strings.Repeat(" ", leftPad) + crumbs + strings.Repeat(" ", rightPad)
+}
+
+// ─── Tool Dialog Overlay ────────────────────────────
+
+func (m model) renderToolDialog() string {
+	tool := m.dialogTool
+	title := tableTitleStyle.Render("Call Tool") +
+		lipgloss.NewStyle().Foreground(colorAqua).Render("[") +
+		tableTitleCountStyle.Render(tool.Name) +
+		lipgloss.NewStyle().Foreground(colorAqua).Render("]")
+
+	var lines []string
+	lines = append(lines, title)
+	lines = append(lines, "")
+
+	for i, p := range tool.Params {
+		req := ""
+		if p.Required {
+			req = lipgloss.NewStyle().Foreground(colorOrangeRed).Render("*")
+		}
+		label := detailKeyStyle.Render(p.Name) + req
+		if p.Type != "" {
+			label += " " + lipgloss.NewStyle().Foreground(colorLightSlateGray).Render("("+p.Type+")")
+		}
+
+		if i == m.dialogParamIdx {
+			// Active input field
+			lines = append(lines, label)
+			lines = append(lines, "  "+m.textInput.View())
+		} else {
+			val := m.dialogInputs[i]
+			if val == "" {
+				val = lipgloss.NewStyle().Foreground(colorLightSlateGray).Render("(empty)")
+			} else {
+				val = detailValueStyle.Render(val)
+			}
+			lines = append(lines, label)
+			lines = append(lines, "  "+val)
+		}
+
+		if p.Description != "" {
+			lines = append(lines, "  "+lipgloss.NewStyle().Foreground(colorLightSlateGray).Render(p.Description))
+		}
+		lines = append(lines, "")
+	}
+
+	lines = append(lines, lipgloss.NewStyle().Foreground(colorLightSlateGray).Render("tab/↓ next  shift-tab/↑ prev  enter submit  esc cancel"))
+
+	inner := strings.Join(lines, "\n")
+	maxW := m.width - 10
+	if maxW < 30 {
+		maxW = 30
+	}
+	return promptBorderCommandStyle.Padding(1, 2).MaxWidth(maxW).Render(inner)
 }
 
 // ─── Help Overlay ───────────────────────────────────
