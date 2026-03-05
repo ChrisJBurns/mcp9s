@@ -74,11 +74,11 @@ type model struct {
 	toolCursor     int
 
 	// Tool call dialog
-	showToolDialog   bool
-	dialogParamIdx   int
-	dialogInputs     []string
-	dialogTool       *mcpTool
-	dialogCalling    bool
+	showToolDialog bool
+	dialogParamIdx int // index into dialogFields (params + OK/Cancel buttons)
+	dialogFields   []textinput.Model
+	dialogTool     *mcpTool
+	dialogOnOK     bool // true when OK is focused
 
 	// Response panel
 	responseText    string
@@ -127,7 +127,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case callToolMsg:
 		m.responseLoading = false
-		m.dialogCalling = false
 		if msg.err != nil {
 			m.responseText = "Error: " + msg.err.Error()
 		} else {
@@ -212,20 +211,30 @@ func (m model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, keys.Enter):
 		if m.toolCursor < len(m.detailTools) {
 			tool := &m.detailTools[m.toolCursor]
-			if len(tool.Params) == 0 {
-				// No params — call immediately
-				m.responseText = ""
-				m.responseLoading = true
-				return m, m.callToolCmd(tool, nil)
-			}
 			m.dialogTool = tool
-			m.dialogInputs = make([]string, len(tool.Params))
 			m.dialogParamIdx = 0
+			m.dialogOnOK = false
 			m.showToolDialog = true
-			m.textInput.Prompt = ""
-			m.textInput.Placeholder = tool.Params[0].Name
-			m.textInput.SetValue("")
-			m.textInput.Focus()
+
+			// Create a textinput for each param
+			m.dialogFields = make([]textinput.Model, len(tool.Params))
+			for i, p := range tool.Params {
+				ti := textinput.New()
+				ti.Prompt = ""
+				ti.Placeholder = p.Name
+				ti.CharLimit = 256
+				ti.Width = 40
+				ti.TextStyle = detailValueStyle
+				ti.PlaceholderStyle = lipgloss.NewStyle().Foreground(colorLightSlateGray)
+				ti.Cursor.Style = lipgloss.NewStyle().Foreground(colorAqua)
+				if i == 0 {
+					ti.Focus()
+				}
+				m.dialogFields[i] = ti
+			}
+			if len(tool.Params) == 0 {
+				m.dialogOnOK = true
+			}
 			return m, textinput.Blink
 		}
 	case key.Matches(msg, keys.Command):
@@ -242,63 +251,82 @@ func (m model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) updateToolDialog(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.dialogCalling {
-		return m, nil
-	}
+	paramCount := len(m.dialogTool.Params)
 
 	switch msg.Type {
 	case tea.KeyEsc:
 		m.showToolDialog = false
-		m.textInput.Blur()
 		return m, nil
 
 	case tea.KeyEnter:
-		// Save current param value
-		m.dialogInputs[m.dialogParamIdx] = m.textInput.Value()
-
-		// Move to next param or submit
-		if m.dialogParamIdx < len(m.dialogTool.Params)-1 {
-			m.dialogParamIdx++
-			p := m.dialogTool.Params[m.dialogParamIdx]
-			m.textInput.Placeholder = p.Name
-			m.textInput.SetValue(m.dialogInputs[m.dialogParamIdx])
-			return m, nil
+		if m.dialogOnOK {
+			// Submit
+			m.showToolDialog = false
+			m.responseText = ""
+			m.responseLoading = true
+			values := make([]string, paramCount)
+			for i, f := range m.dialogFields {
+				values[i] = f.Value()
+			}
+			args := buildArgs(m.dialogTool.Params, values)
+			return m, m.callToolCmd(m.dialogTool, args)
 		}
-
-		// All params filled — call the tool
-		m.showToolDialog = false
-		m.textInput.Blur()
-		m.responseText = ""
-		m.responseLoading = true
-		args := buildArgs(m.dialogTool.Params, m.dialogInputs)
-		return m, m.callToolCmd(m.dialogTool, args)
-
-	case tea.KeyShiftTab, tea.KeyUp:
-		// Navigate to previous param
-		if m.dialogParamIdx > 0 {
-			m.dialogInputs[m.dialogParamIdx] = m.textInput.Value()
-			m.dialogParamIdx--
-			p := m.dialogTool.Params[m.dialogParamIdx]
-			m.textInput.Placeholder = p.Name
-			m.textInput.SetValue(m.dialogInputs[m.dialogParamIdx])
-		}
-		return m, nil
+		// Enter on a field — move to next field or OK
+		return m, m.dialogNext()
 
 	case tea.KeyTab, tea.KeyDown:
-		// Navigate to next param
-		if m.dialogParamIdx < len(m.dialogTool.Params)-1 {
-			m.dialogInputs[m.dialogParamIdx] = m.textInput.Value()
-			m.dialogParamIdx++
-			p := m.dialogTool.Params[m.dialogParamIdx]
-			m.textInput.Placeholder = p.Name
-			m.textInput.SetValue(m.dialogInputs[m.dialogParamIdx])
-		}
-		return m, nil
+		return m, m.dialogNext()
+
+	case tea.KeyShiftTab, tea.KeyUp:
+		return m, m.dialogPrev()
 	}
 
-	var cmd tea.Cmd
-	m.textInput, cmd = m.textInput.Update(msg)
-	return m, cmd
+	// Pass key to the active text input
+	if !m.dialogOnOK && m.dialogParamIdx < paramCount {
+		var cmd tea.Cmd
+		m.dialogFields[m.dialogParamIdx], cmd = m.dialogFields[m.dialogParamIdx].Update(msg)
+		return m, cmd
+	}
+	return m, nil
+}
+
+func (m *model) dialogNext() tea.Cmd {
+	paramCount := len(m.dialogTool.Params)
+	if m.dialogOnOK {
+		return nil
+	}
+	// Blur current field
+	if m.dialogParamIdx < paramCount {
+		m.dialogFields[m.dialogParamIdx].Blur()
+	}
+	if m.dialogParamIdx < paramCount-1 {
+		m.dialogParamIdx++
+		m.dialogFields[m.dialogParamIdx].Focus()
+		return textinput.Blink
+	}
+	// Move to OK button
+	m.dialogOnOK = true
+	return nil
+}
+
+func (m *model) dialogPrev() tea.Cmd {
+	if m.dialogOnOK {
+		m.dialogOnOK = false
+		paramCount := len(m.dialogTool.Params)
+		if paramCount > 0 {
+			m.dialogParamIdx = paramCount - 1
+			m.dialogFields[m.dialogParamIdx].Focus()
+			return textinput.Blink
+		}
+		return nil
+	}
+	if m.dialogParamIdx > 0 {
+		m.dialogFields[m.dialogParamIdx].Blur()
+		m.dialogParamIdx--
+		m.dialogFields[m.dialogParamIdx].Focus()
+		return textinput.Blink
+	}
+	return nil
 }
 
 func (m model) updateServers(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -870,58 +898,95 @@ func (m model) renderCrumbs() string {
 	return strings.Repeat(" ", leftPad) + crumbs + strings.Repeat(" ", rightPad)
 }
 
-// ─── Tool Dialog Overlay ────────────────────────────
+// ─── Tool Dialog Overlay (k9s-style form) ───────────
 
 func (m model) renderToolDialog() string {
 	tool := m.dialogTool
+
+	dialogW := m.width * 60 / 100
+	if dialogW < 40 {
+		dialogW = 40
+	}
+	if dialogW > 80 {
+		dialogW = 80
+	}
+	innerW := dialogW - 4 // border padding
+
 	title := tableTitleStyle.Render("Call Tool") +
 		lipgloss.NewStyle().Foreground(colorAqua).Render("[") +
 		tableTitleCountStyle.Render(tool.Name) +
 		lipgloss.NewStyle().Foreground(colorAqua).Render("]")
 
+	bc := lipgloss.NewStyle().Foreground(colorLightSkyBlue)
+	dimStyle := lipgloss.NewStyle().Foreground(colorLightSlateGray)
+	fieldBorder := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorDodgerBlue).
+		Width(innerW - 4)
+	fieldBorderActive := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorAqua).
+		Width(innerW - 4)
+	_ = bc
+
 	var lines []string
-	lines = append(lines, title)
-	lines = append(lines, "")
 
-	for i, p := range tool.Params {
-		req := ""
-		if p.Required {
-			req = lipgloss.NewStyle().Foreground(colorOrangeRed).Render("*")
-		}
-		label := detailKeyStyle.Render(p.Name) + req
-		if p.Type != "" {
-			label += " " + lipgloss.NewStyle().Foreground(colorLightSlateGray).Render("("+p.Type+")")
-		}
-
-		if i == m.dialogParamIdx {
-			// Active input field
-			lines = append(lines, label)
-			lines = append(lines, "  "+m.textInput.View())
-		} else {
-			val := m.dialogInputs[i]
-			if val == "" {
-				val = lipgloss.NewStyle().Foreground(colorLightSlateGray).Render("(empty)")
-			} else {
-				val = detailValueStyle.Render(val)
+	if len(tool.Params) == 0 {
+		lines = append(lines, detailValueStyle.Render("This tool has no parameters."))
+		lines = append(lines, dimStyle.Render("Press enter to confirm, esc to cancel."))
+		lines = append(lines, "")
+	} else {
+		for i, p := range tool.Params {
+			// Label: name (type) *
+			label := detailKeyStyle.Render(p.Name)
+			if p.Type != "" {
+				label += " " + dimStyle.Render("("+p.Type+")")
+			}
+			if p.Required {
+				label += lipgloss.NewStyle().Foreground(colorOrangeRed).Render(" *")
 			}
 			lines = append(lines, label)
-			lines = append(lines, "  "+val)
-		}
 
-		if p.Description != "" {
-			lines = append(lines, "  "+lipgloss.NewStyle().Foreground(colorLightSlateGray).Render(p.Description))
+			if p.Description != "" {
+				lines = append(lines, dimStyle.Render(truncate(p.Description, innerW)))
+			}
+
+			// Input field
+			border := fieldBorder
+			if i == m.dialogParamIdx && !m.dialogOnOK {
+				border = fieldBorderActive
+			}
+			lines = append(lines, border.Render(m.dialogFields[i].View()))
+			lines = append(lines, "")
 		}
-		lines = append(lines, "")
 	}
 
-	lines = append(lines, lipgloss.NewStyle().Foreground(colorLightSlateGray).Render("tab/↓ next  shift-tab/↑ prev  enter submit  esc cancel"))
+	// OK / Cancel buttons
+	okStyle := lipgloss.NewStyle().
+		Foreground(colorBlack).
+		Background(colorLightSlateGray).
+		Padding(0, 3)
+	cancelStyle := okStyle
 
-	inner := strings.Join(lines, "\n")
-	maxW := m.width - 10
-	if maxW < 30 {
-		maxW = 30
+	if m.dialogOnOK {
+		okStyle = lipgloss.NewStyle().
+			Foreground(colorBlack).
+			Background(colorAqua).
+			Bold(true).
+			Padding(0, 3)
 	}
-	return promptBorderCommandStyle.Padding(1, 2).MaxWidth(maxW).Render(inner)
+
+	buttons := okStyle.Render("OK") + "  " + cancelStyle.Render("Cancel")
+	// Center the buttons
+	btnW := lipgloss.Width(buttons)
+	btnPad := (innerW - btnW) / 2
+	if btnPad < 0 {
+		btnPad = 0
+	}
+	lines = append(lines, strings.Repeat(" ", btnPad)+buttons)
+
+	content := strings.Join(lines, "\n")
+	return m.renderBorderedBox(content, title, innerW)
 }
 
 // ─── Help Overlay ───────────────────────────────────
