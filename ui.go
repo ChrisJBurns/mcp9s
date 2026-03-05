@@ -260,16 +260,9 @@ func (m model) updateToolDialog(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyEnter:
 		if m.dialogOnOK {
-			// Submit
+			// Close dialog (tool calling not yet implemented)
 			m.showToolDialog = false
-			m.responseText = ""
-			m.responseLoading = true
-			values := make([]string, paramCount)
-			for i, f := range m.dialogFields {
-				values[i] = f.Value()
-			}
-			args := buildArgs(m.dialogTool.Params, values)
-			return m, m.callToolCmd(m.dialogTool, args)
+			return m, nil
 		}
 		// Enter on a field — move to next field or OK
 		return m, m.dialogNext()
@@ -473,7 +466,9 @@ func (m model) View() string {
 		sections = append(sections, m.renderPrompt())
 	}
 
-	if m.view == viewDetail {
+	if m.showToolDialog {
+		sections = append(sections, m.renderToolDialog())
+	} else if m.view == viewDetail {
 		sections = append(sections, m.renderDetail())
 	} else {
 		sections = append(sections, m.renderTable())
@@ -492,10 +487,6 @@ func (m model) View() string {
 		lines = lines[:m.height]
 	}
 	result := strings.Join(lines, "\n")
-
-	if m.showToolDialog {
-		return m.overlayCenter(result, m.renderToolDialog())
-	}
 
 	if m.showHelp {
 		return m.overlayCenter(result, m.renderHelp())
@@ -878,7 +869,11 @@ func joinHorizontal(left, right string, gap int) string {
 
 func (m model) renderCrumbs() string {
 	var crumbs string
-	if m.view == viewDetail && m.cursor < len(m.filtered) {
+	if m.showToolDialog && m.dialogTool != nil {
+		crumbs = crumbStyle.Render("servers") + " " +
+			crumbStyle.Render(m.detailServerNm) + " " +
+			crumbActiveStyle.Render(m.dialogTool.Name)
+	} else if m.view == viewDetail && m.cursor < len(m.filtered) {
 		crumbs = crumbStyle.Render("servers") + " " +
 			crumbActiveStyle.Render(m.filtered[m.cursor].name)
 	} else {
@@ -898,46 +893,37 @@ func (m model) renderCrumbs() string {
 	return strings.Repeat(" ", leftPad) + crumbs + strings.Repeat(" ", rightPad)
 }
 
-// ─── Tool Dialog Overlay (k9s-style form) ───────────
+// ─── Tool Call Form (k9s-style) ─────────────────────
 
 func (m model) renderToolDialog() string {
 	tool := m.dialogTool
+	iw := m.innerWidth()
+	ch := m.contentHeight()
 
-	dialogW := m.width * 60 / 100
-	if dialogW < 40 {
-		dialogW = 40
-	}
-	if dialogW > 80 {
-		dialogW = 80
-	}
-	innerW := dialogW - 4 // border padding
+	dimStyle := lipgloss.NewStyle().Foreground(colorLightSlateGray)
+	fieldBorder := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorDodgerBlue).
+		Width(iw - 4)
+	fieldBorderActive := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(colorAqua).
+		Width(iw - 4)
 
 	title := tableTitleStyle.Render("Call Tool") +
 		lipgloss.NewStyle().Foreground(colorAqua).Render("[") +
 		tableTitleCountStyle.Render(tool.Name) +
 		lipgloss.NewStyle().Foreground(colorAqua).Render("]")
 
-	bc := lipgloss.NewStyle().Foreground(colorLightSkyBlue)
-	dimStyle := lipgloss.NewStyle().Foreground(colorLightSlateGray)
-	fieldBorder := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorDodgerBlue).
-		Width(innerW - 4)
-	fieldBorderActive := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colorAqua).
-		Width(innerW - 4)
-	_ = bc
-
 	var lines []string
 
 	if len(tool.Params) == 0 {
+		lines = append(lines, "")
 		lines = append(lines, detailValueStyle.Render("This tool has no parameters."))
-		lines = append(lines, dimStyle.Render("Press enter to confirm, esc to cancel."))
 		lines = append(lines, "")
 	} else {
 		for i, p := range tool.Params {
-			// Label: name (type) *
+			// Label line: name (type) *
 			label := detailKeyStyle.Render(p.Name)
 			if p.Type != "" {
 				label += " " + dimStyle.Render("("+p.Type+")")
@@ -948,10 +934,10 @@ func (m model) renderToolDialog() string {
 			lines = append(lines, label)
 
 			if p.Description != "" {
-				lines = append(lines, dimStyle.Render(truncate(p.Description, innerW)))
+				lines = append(lines, dimStyle.Render(truncate(p.Description, iw)))
 			}
 
-			// Input field
+			// Input field with border
 			border := fieldBorder
 			if i == m.dialogParamIdx && !m.dialogOnOK {
 				border = fieldBorderActive
@@ -977,16 +963,25 @@ func (m model) renderToolDialog() string {
 	}
 
 	buttons := okStyle.Render("OK") + "  " + cancelStyle.Render("Cancel")
-	// Center the buttons
 	btnW := lipgloss.Width(buttons)
-	btnPad := (innerW - btnW) / 2
+	btnPad := (iw - btnW) / 2
 	if btnPad < 0 {
 		btnPad = 0
 	}
 	lines = append(lines, strings.Repeat(" ", btnPad)+buttons)
 
-	content := strings.Join(lines, "\n")
-	return m.renderBorderedBox(content, title, innerW)
+	// Hint line
+	lines = append(lines, "")
+	hint := dimStyle.Render("tab/↓ next • shift-tab/↑ prev • enter confirm • esc cancel")
+	hintW := lipgloss.Width(hint)
+	hintPad := (iw - hintW) / 2
+	if hintPad < 0 {
+		hintPad = 0
+	}
+	lines = append(lines, strings.Repeat(" ", hintPad)+hint)
+
+	content := m.padToHeight(strings.Join(lines, "\n"), ch)
+	return m.renderBorderedBox(content, title, iw)
 }
 
 // ─── Help Overlay ───────────────────────────────────
