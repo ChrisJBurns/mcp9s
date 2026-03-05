@@ -80,7 +80,8 @@ type model struct {
 	dialogTool     *mcpTool
 	dialogOnOK     bool // true when OK is focused
 
-	// Response panel
+	// Request/Response panels
+	requestText     string
 	responseText    string
 	responseLoading bool
 }
@@ -260,7 +261,17 @@ func (m model) updateToolDialog(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyEnter:
 		if m.dialogOnOK {
-			// Close dialog (tool calling not yet implemented)
+			// Build curl request and return to detail view
+			values := make([]string, paramCount)
+			for i, f := range m.dialogFields {
+				values[i] = f.Value()
+			}
+			args := buildArgs(m.dialogTool.Params, values)
+			serverURL := ""
+			if m.cursor < len(m.filtered) {
+				serverURL = stripFragment(m.filtered[m.cursor].server.URL)
+			}
+			m.requestText = buildCurl(serverURL, m.dialogTool.Name, args)
 			m.showToolDialog = false
 			return m, nil
 		}
@@ -348,6 +359,8 @@ func (m model) updateServers(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.detailError = ""
 			m.detailLoading = true
 			m.detailServerNm = s.name
+			m.requestText = ""
+			m.responseText = ""
 			return m, m.fetchToolsCmd(s)
 		}
 	case key.Matches(msg, keys.Filter):
@@ -770,10 +783,18 @@ func (m model) renderDetail() string {
 	leftInnerW := bottomTotalInner / 2
 	rightInnerW := bottomTotalInner - leftInnerW
 
-	// Request panel — show selected tool's parameters
+	// Request panel — show curl command or selected tool's parameters
 	leftTitle := tableTitleStyle.Render("Request")
 	var leftLines []string
-	if m.toolCursor < len(m.detailTools) {
+	if m.requestText != "" {
+		for _, line := range strings.Split(m.requestText, "\n") {
+			for len(line) > leftInnerW {
+				leftLines = append(leftLines, detailValueStyle.Render(line[:leftInnerW]))
+				line = line[leftInnerW:]
+			}
+			leftLines = append(leftLines, detailValueStyle.Render(line))
+		}
+	} else if m.toolCursor < len(m.detailTools) {
 		tool := m.detailTools[m.toolCursor]
 		if len(tool.Params) == 0 {
 			leftLines = append(leftLines, detailValueStyle.Render("No parameters"))

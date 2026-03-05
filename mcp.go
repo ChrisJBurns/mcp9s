@@ -227,6 +227,27 @@ func buildArgs(params []toolParam, values []string) map[string]any {
 	return args
 }
 
+// buildCurl generates a curl command for an MCP tools/call JSON-RPC request.
+func buildCurl(serverURL, toolName string, args map[string]any) string {
+	params := map[string]any{
+		"name": toolName,
+	}
+	if len(args) > 0 {
+		params["arguments"] = args
+	}
+
+	body := map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "tools/call",
+		"params":  params,
+	}
+
+	b, _ := json.MarshalIndent(body, "", "  ")
+
+	return fmt.Sprintf("curl -X POST %s \\\n  -H 'Content-Type: application/json' \\\n  -d '%s'", serverURL, string(b))
+}
+
 func stripFragment(url string) string {
 	if i := strings.Index(url, "#"); i != -1 {
 		return url[:i]
