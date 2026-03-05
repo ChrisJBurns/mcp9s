@@ -57,7 +57,9 @@ type model struct {
 func newModel(servers []serverEntry, clientCount int) model {
 	ti := textinput.New()
 	ti.CharLimit = 128
+	ti.Prompt = ""
 	ti.TextStyle = promptTextStyle
+	ti.PromptStyle = promptTextStyle
 	ti.Cursor.Style = lipgloss.NewStyle().Foreground(colorAqua)
 
 	return model{
@@ -133,8 +135,18 @@ func (m model) updateInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if key.Matches(msg, keys.Back) || key.Matches(msg, keys.Quit) {
+	switch {
+	case key.Matches(msg, keys.Back), key.Matches(msg, keys.Quit):
 		m.view = viewServers
+	case key.Matches(msg, keys.Command):
+		m.inputMode = inputCommand
+		m.textInput.Prompt = "> "
+		m.textInput.Placeholder = ""
+		m.textInput.SetValue("")
+		m.textInput.Focus()
+		return m, textinput.Blink
+	case key.Matches(msg, keys.Help):
+		m.showHelp = true
 	}
 	return m, nil
 }
@@ -163,12 +175,14 @@ func (m model) updateServers(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case key.Matches(msg, keys.Filter):
 		m.inputMode = inputFilter
+		m.textInput.Prompt = "/ "
 		m.textInput.Placeholder = "filter"
 		m.textInput.SetValue(m.filter)
 		m.textInput.Focus()
 		return m, textinput.Blink
 	case key.Matches(msg, keys.Command):
 		m.inputMode = inputCommand
+		m.textInput.Prompt = "> "
 		m.textInput.Placeholder = ""
 		m.textInput.SetValue("")
 		m.textInput.Focus()
@@ -398,20 +412,15 @@ func (m model) renderMenuGrid(bindings []key.Binding) []string {
 // ─── Prompt ─────────────────────────────────────────
 
 func (m model) renderPrompt() string {
-	var prefix string
 	var bs lipgloss.Style
-
 	if m.inputMode == inputCommand {
-		prefix = "> "
 		bs = promptBorderCommandStyle
 	} else {
-		prefix = "/ "
 		bs = promptBorderFilterStyle
 	}
 
-	inner := promptTextStyle.Render(prefix) + m.textInput.View()
 	w := m.innerWidth()
-	return bs.Width(w).Render(inner)
+	return bs.Width(w).Render(m.textInput.View())
 }
 
 // ─── Table ──────────────────────────────────────────
