@@ -486,40 +486,99 @@ func (m model) renderTable() string {
 	return m.renderBorderedBox(strings.Join(lines, "\n"), title, iw)
 }
 
-// ─── Detail View ────────────────────────────────────
+// ─── Server Detail View (3-panel layout) ────────────
 
 func (m model) renderDetail() string {
 	if m.cursor >= len(m.filtered) {
 		return ""
 	}
 	s := m.filtered[m.cursor]
+	ch := m.contentHeight()
+	iw := m.innerWidth()
 
-	title := tableTitleStyle.Render("Describe") +
+	// Split height: top panel gets ~40%, bottom panels share the rest
+	topH := ch * 40 / 100
+	if topH < 3 {
+		topH = 3
+	}
+	// Bottom panels account for the border overhead of the top box (2 lines)
+	bottomH := ch - topH - 2 // -2 for top box border lines
+	if bottomH < 3 {
+		bottomH = 3
+	}
+
+	// Top panel — full width
+	topTitle := tableTitleStyle.Render("Server") +
 		lipgloss.NewStyle().Foreground(colorAqua).Render("[") +
 		tableTitleCountStyle.Render(s.name) +
 		lipgloss.NewStyle().Foreground(colorAqua).Render("]")
+	topContent := m.padToHeight("", topH)
+	topBox := m.renderBorderedBox(topContent, topTitle, iw)
 
+	// Bottom panels — split width (account for 4 chars border per box + 1 gap)
+	// Each box has 4 chars of border overhead (│ + space + space + │)
+	gap := 1
+	bottomTotalInner := iw - 4 - gap // subtract one box's border + gap
+	leftInnerW := bottomTotalInner / 2
+	rightInnerW := bottomTotalInner - leftInnerW
+
+	leftTitle := tableTitleStyle.Render("Tools")
+	leftContent := m.padToHeight("", bottomH)
+	leftBox := m.renderBorderedBox(leftContent, leftTitle, leftInnerW)
+
+	rightTitle := tableTitleStyle.Render("Resources")
+	rightContent := m.padToHeight("", bottomH)
+	rightBox := m.renderBorderedBox(rightContent, rightTitle, rightInnerW)
+
+	// Join left and right boxes side-by-side
+	bottomRow := joinHorizontal(leftBox, rightBox, gap)
+
+	return topBox + "\n" + bottomRow
+}
+
+// padToHeight returns content padded with empty lines to fill the given height.
+func (m model) padToHeight(content string, height int) string {
 	var lines []string
-	addLine := func(key, value string) {
-		lines = append(lines, detailKeyStyle.Render(key)+detailColonStyle.Render(": ")+detailValueStyle.Render(value))
+	if content != "" {
+		lines = strings.Split(content, "\n")
 	}
-	addLine("Name", s.name)
-	addLine("URL", s.server.URL)
-	addLine("Clients", strings.Join(s.clients, ", "))
-	if s.server.Type != "" {
-		addLine("Type", s.server.Type)
-	}
-	if s.status != "" {
-		addLine("Status", s.status)
-	}
-
-	iw := m.innerWidth()
-	ch := m.contentHeight()
-	for len(lines) < ch {
+	for len(lines) < height {
 		lines = append(lines, "")
 	}
+	return strings.Join(lines[:height], "\n")
+}
 
-	return m.renderBorderedBox(strings.Join(lines, "\n"), title, iw)
+// joinHorizontal places two rendered boxes side by side with a gap between them.
+func joinHorizontal(left, right string, gap int) string {
+	leftLines := strings.Split(left, "\n")
+	rightLines := strings.Split(right, "\n")
+
+	maxLines := len(leftLines)
+	if len(rightLines) > maxLines {
+		maxLines = len(rightLines)
+	}
+
+	leftW := 0
+	for _, l := range leftLines {
+		if w := lipgloss.Width(l); w > leftW {
+			leftW = w
+		}
+	}
+
+	spacer := strings.Repeat(" ", gap)
+	var out []string
+	for i := 0; i < maxLines; i++ {
+		l := ""
+		if i < len(leftLines) {
+			l = leftLines[i]
+		}
+		r := ""
+		if i < len(rightLines) {
+			r = rightLines[i]
+		}
+		out = append(out, padRight(l, leftW)+spacer+r)
+	}
+	return strings.Join(out, "\n")
 }
 
 // ─── Crumbs ─────────────────────────────────────────
