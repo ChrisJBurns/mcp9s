@@ -255,7 +255,7 @@ func buildCurl(serverURL, sessionID, toolName string, args map[string]any) strin
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("curl -s -X POST '%s'", serverURL))
 	b.WriteString(" \\\n  -H 'Content-Type: application/json'")
-	b.WriteString(" \\\n  -H 'Accept: application/json'")
+	b.WriteString(" \\\n  -H 'Accept: application/json, text/event-stream'")
 	if sessionID != "" {
 		b.WriteString(fmt.Sprintf(" \\\n  -H 'Mcp-Session-Id: %s'", sessionID))
 	}
