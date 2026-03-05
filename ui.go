@@ -691,14 +691,16 @@ func (m model) renderBorderedBox(content, title string, innerWidth int) string {
 	// The total width between corners = innerWidth + 2 (for the space padding on each side)
 	borderFill := innerWidth + 2 // space inside │ content │
 
-	// Top border: ╭─ title ────...──╮
+	// Top border: ╭──── title ────╮ (centered)
 	titleStr := " " + title + " "
 	titleVisualW := lipgloss.Width(titleStr)
-	rightFill := borderFill - 1 - titleVisualW // -1 for the single ─ before title
-	if rightFill < 0 {
-		rightFill = 0
+	totalFill := borderFill - titleVisualW
+	if totalFill < 0 {
+		totalFill = 0
 	}
-	topBorder := bc.Render(tl+h) + titleStr + bc.Render(strings.Repeat(h, rightFill)+tr)
+	leftFill := totalFill / 2
+	rightFill := totalFill - leftFill
+	topBorder := bc.Render(tl+strings.Repeat(h, leftFill)) + titleStr + bc.Render(strings.Repeat(h, rightFill)+tr)
 
 	// Bottom border: ╰────...──╯
 	bottomBorder := bc.Render(bl + strings.Repeat(h, borderFill) + br)
