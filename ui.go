@@ -38,6 +38,13 @@ const (
 	inputCommand
 )
 
+// toolsMsg is sent when tools have been fetched from an MCP server.
+type toolsMsg struct {
+	serverName string
+	tools      []mcpTool
+	err        error
+}
+
 type model struct {
 	allServers  []serverEntry
 	filtered    []serverEntry
@@ -52,6 +59,12 @@ type model struct {
 	filter    string
 
 	showHelp bool
+
+	// Detail view state
+	detailTools    []mcpTool
+	detailLoading  bool
+	detailError    string
+	detailServerNm string
 }
 
 func newModel(servers []serverEntry, clientCount int) model {
@@ -81,6 +94,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		return m, nil
+
+	case toolsMsg:
+		if msg.serverName == m.detailServerNm {
+			m.detailLoading = false
+			if msg.err != nil {
+				m.detailError = msg.err.Error()
+			} else {
+				m.detailTools = msg.tools
+			}
+		}
 		return m, nil
 
 	case tea.KeyMsg:
@@ -171,7 +195,13 @@ func (m model) updateServers(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case key.Matches(msg, keys.Describe), key.Matches(msg, keys.Enter):
 		if len(m.filtered) > 0 {
+			s := m.filtered[m.cursor]
 			m.view = viewDetail
+			m.detailTools = nil
+			m.detailError = ""
+			m.detailLoading = true
+			m.detailServerNm = s.name
+			return m, m.fetchToolsCmd(s)
 		}
 	case key.Matches(msg, keys.Filter):
 		m.inputMode = inputFilter
@@ -191,6 +221,13 @@ func (m model) updateServers(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.showHelp = true
 	}
 	return m, nil
+}
+
+func (m model) fetchToolsCmd(s serverEntry) tea.Cmd {
+	return func() tea.Msg {
+		tools, err := fetchTools(s.server.URL)
+		return toolsMsg{serverName: s.name, tools: tools, err: err}
+	}
 }
 
 func (m *model) applyFilter() {
@@ -501,7 +538,6 @@ func (m model) renderDetail() string {
 	if m.cursor >= len(m.filtered) {
 		return ""
 	}
-	s := m.filtered[m.cursor]
 	ch := m.contentHeight()
 	iw := m.innerWidth()
 
@@ -516,12 +552,34 @@ func (m model) renderDetail() string {
 		bottomH = 3
 	}
 
-	// Top panel — full width
+	// Top panel — full width: tools list
+	toolCount := len(m.detailTools)
 	topTitle := tableTitleStyle.Render("Tools") +
 		lipgloss.NewStyle().Foreground(colorAqua).Render("[") +
-		tableTitleCountStyle.Render(s.name) +
+		tableTitleCountStyle.Render(fmt.Sprintf("%d", toolCount)) +
 		lipgloss.NewStyle().Foreground(colorAqua).Render("]")
-	topContent := m.padToHeight("", topH)
+
+	var topLines []string
+	if m.detailLoading {
+		topLines = append(topLines, detailValueStyle.Render("Loading tools..."))
+	} else if m.detailError != "" {
+		topLines = append(topLines, lipgloss.NewStyle().Foreground(colorOrangeRed).Render("Error: "+m.detailError))
+	} else if toolCount == 0 {
+		topLines = append(topLines, detailValueStyle.Render("No tools found"))
+	} else {
+		// Table header
+		nameColW := iw * 30 / 100
+		descColW := iw - nameColW
+		topLines = append(topLines,
+			tableHeaderStyle.Render(padRight("NAME", nameColW))+
+				tableHeaderStyle.Render(padRight("DESCRIPTION", descColW)))
+		for _, t := range m.detailTools {
+			topLines = append(topLines,
+				tableRowStyle.Render(padRight(truncate(t.Name, nameColW), nameColW))+
+					tableRowStyle.Render(padRight(truncate(t.Description, descColW), descColW)))
+		}
+	}
+	topContent := m.padToHeight(strings.Join(topLines, "\n"), topH)
 	topBox := m.renderBorderedBox(topContent, topTitle, iw)
 
 	// Bottom panels — split width (account for 4 chars border per box + 1 gap)
