@@ -43,7 +43,7 @@ const (
 type toolsMsg struct {
 	serverName string
 	tools      []mcpTool
-	sessionID  string
+	session    *mcpSession
 	err        error
 }
 
@@ -73,7 +73,7 @@ type model struct {
 	detailLoading  bool
 	detailError    string
 	detailServerNm string
-	detailSession  string
+	detailSession  *mcpSession
 	toolCursor     int
 
 	// Tool call dialog
@@ -125,7 +125,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.detailError = msg.err.Error()
 			} else {
 				m.detailTools = msg.tools
-				m.detailSession = msg.sessionID
+				m.detailSession = msg.session
 			}
 		}
 		return m, nil
@@ -199,6 +199,11 @@ func (m model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.view = viewServers
 		m.toolCursor = 0
 		m.responseText = ""
+		m.requestText = ""
+		if m.detailSession != nil {
+			m.detailSession.Close()
+			m.detailSession = nil
+		}
 	case key.Matches(msg, keys.Up):
 		if m.toolCursor > 0 {
 			m.toolCursor--
@@ -279,7 +284,7 @@ func (m model) updateToolDialog(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.cursor < len(m.filtered) {
 				serverURL = stripFragment(m.filtered[m.cursor].server.URL)
 			}
-			m.requestText = buildCurl(serverURL, m.detailSession, m.dialogTool.Name, args)
+			m.requestText = buildCurl(serverURL, m.detailSession.ID(), m.dialogTool.Name, args)
 			m.showToolDialog = false
 			return m, nil
 		}
@@ -362,6 +367,10 @@ func (m model) updateServers(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, keys.Describe), key.Matches(msg, keys.Enter):
 		if len(m.filtered) > 0 {
 			s := m.filtered[m.cursor]
+			if m.detailSession != nil {
+				m.detailSession.Close()
+				m.detailSession = nil
+			}
 			m.view = viewDetail
 			m.detailTools = nil
 			m.detailError = ""
@@ -397,7 +406,7 @@ func (m model) fetchToolsCmd(s serverEntry) tea.Cmd {
 		if err != nil {
 			return toolsMsg{serverName: s.name, err: err}
 		}
-		return toolsMsg{serverName: s.name, tools: result.tools, sessionID: result.sessionID}
+		return toolsMsg{serverName: s.name, tools: result.tools, session: result.session}
 	}
 }
 

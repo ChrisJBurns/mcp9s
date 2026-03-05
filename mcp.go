@@ -26,10 +26,28 @@ type mcpTool struct {
 	Params      []toolParam
 }
 
-// fetchToolsResult holds the tools and session ID from a successful fetch.
+// mcpSession wraps a live MCP client session.
+type mcpSession struct {
+	session *mcp.ClientSession
+}
+
+func (s *mcpSession) ID() string {
+	if s == nil || s.session == nil {
+		return ""
+	}
+	return s.session.ID()
+}
+
+func (s *mcpSession) Close() {
+	if s != nil && s.session != nil {
+		s.session.Close()
+	}
+}
+
+// fetchToolsResult holds the tools and live session from a successful fetch.
 type fetchToolsResult struct {
-	tools     []mcpTool
-	sessionID string
+	tools   []mcpTool
+	session *mcpSession
 }
 
 // fetchTools connects to the MCP server at the given URL and returns its tools
@@ -94,12 +112,10 @@ func tryFetchTools(transport mcp.Transport) (*fetchToolsResult, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer session.Close()
-
-	sessionID := session.ID()
 
 	result, err := session.ListTools(ctx, &mcp.ListToolsParams{})
 	if err != nil {
+		session.Close()
 		return nil, err
 	}
 
@@ -116,7 +132,8 @@ func tryFetchTools(transport mcp.Transport) (*fetchToolsResult, error) {
 		})
 	}
 
-	return &fetchToolsResult{tools: tools, sessionID: sessionID}, nil
+	// Session is kept open — caller must close it when done
+	return &fetchToolsResult{tools: tools, session: &mcpSession{session: session}}, nil
 }
 
 func tryCallTool(transport mcp.Transport, toolName string, args map[string]any) (string, error) {
