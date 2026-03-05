@@ -7,6 +7,7 @@
 *.dll
 *.so
 *.dylib
+mcp9s
 
 # Test binary, built with `go test -c`
 *.test
