@@ -113,6 +113,10 @@ func DiscoverServers() ([]serverEntry, int) {
 		clientCount++
 
 		for name, srv := range parsed {
+			// Only include remote (SSE/Streamable HTTP) servers
+			if srv.URL == "" {
+				continue
+			}
 			if idx, ok := seen[name]; ok {
 				servers[idx].clients = append(servers[idx].clients, cd.name)
 			} else {
@@ -120,7 +124,7 @@ func DiscoverServers() ([]serverEntry, int) {
 				servers = append(servers, serverEntry{
 					name:    name,
 					server:  srv,
-					status:  serverStatus(srv),
+					status:  "",
 					clients: []string{cd.name},
 				})
 			}
@@ -132,13 +136,6 @@ func DiscoverServers() ([]serverEntry, int) {
 	})
 
 	return servers, clientCount
-}
-
-func serverStatus(s MCPServer) string {
-	if s.URL != "" {
-		return "Remote"
-	}
-	return "Defined"
 }
 
 // parseClientConfig dispatches to the right parser based on format.

@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"regexp"
-	"sort"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -190,10 +189,8 @@ func (m *model) applyFilter() {
 		}
 		var out []serverEntry
 		for _, s := range m.allServers {
-			args := strings.Join(s.server.Args, " ")
 			clients := strings.Join(s.clients, " ")
-			if re.MatchString(s.name) || re.MatchString(s.server.Command) || re.MatchString(args) ||
-				re.MatchString(s.server.URL) || re.MatchString(clients) {
+			if re.MatchString(s.name) || re.MatchString(s.server.URL) || re.MatchString(clients) {
 				out = append(out, s)
 			}
 		}
@@ -424,12 +421,11 @@ func (m model) renderTable() string {
 	ch := m.contentHeight()
 
 	// Column widths proportional to available space
-	nameW := iw * 18 / 100
-	statusW := iw * 8 / 100
-	clientsW := iw * 18 / 100
-	cmdW := iw * 16 / 100
-	argsW := iw - nameW - statusW - clientsW - cmdW
-	for _, w := range []*int{&nameW, &statusW, &clientsW, &cmdW, &argsW} {
+	nameW := iw * 20 / 100
+	urlW := iw * 40 / 100
+	clientsW := iw * 25 / 100
+	statusW := iw - nameW - urlW - clientsW
+	for _, w := range []*int{&nameW, &urlW, &clientsW, &statusW} {
 		if *w < 6 {
 			*w = 6
 		}
@@ -446,10 +442,9 @@ func (m model) renderTable() string {
 
 	// Header row
 	hdr := tableHeaderStyle.Render(padRight("NAME", nameW)) +
-		tableHeaderStyle.Render(padRight("STATUS", statusW)) +
+		tableHeaderStyle.Render(padRight("URL", urlW)) +
 		tableHeaderStyle.Render(padRight("CLIENTS", clientsW)) +
-		tableHeaderStyle.Render(padRight("COMMAND", cmdW)) +
-		tableHeaderStyle.Render(padRight("ARGS", argsW))
+		tableHeaderStyle.Render(padRight("STATUS", statusW))
 
 	var lines []string
 	lines = append(lines, hdr)
@@ -470,12 +465,6 @@ func (m model) renderTable() string {
 
 	for i := start; i < end; i++ {
 		s := m.filtered[i]
-		cmd := s.server.Command
-		args := strings.Join(s.server.Args, " ")
-		if cmd == "" && s.server.URL != "" {
-			cmd = s.server.URL
-			args = ""
-		}
 		clientsStr := truncate(strings.Join(s.clients, ", "), clientsW)
 
 		style := tableRowStyle
@@ -484,10 +473,9 @@ func (m model) renderTable() string {
 		}
 
 		row := style.Render(padRight(truncate(s.name, nameW), nameW)) +
-			style.Render(padRight(s.status, statusW)) +
+			style.Render(padRight(truncate(s.server.URL, urlW), urlW)) +
 			style.Render(padRight(clientsStr, clientsW)) +
-			style.Render(padRight(truncate(cmd, cmdW), cmdW)) +
-			style.Render(padRight(truncate(args, argsW), argsW))
+			style.Render(padRight(truncate(s.status, statusW), statusW))
 		lines = append(lines, row)
 	}
 
@@ -516,30 +504,13 @@ func (m model) renderDetail() string {
 		lines = append(lines, detailKeyStyle.Render(key)+detailColonStyle.Render(": ")+detailValueStyle.Render(value))
 	}
 	addLine("Name", s.name)
-	addLine("Status", s.status)
+	addLine("URL", s.server.URL)
 	addLine("Clients", strings.Join(s.clients, ", "))
-	if s.server.Command != "" {
-		addLine("Command", s.server.Command)
-		addLine("Args", strings.Join(s.server.Args, " "))
-	}
-	if s.server.URL != "" {
-		addLine("URL", s.server.URL)
-	}
 	if s.server.Type != "" {
 		addLine("Type", s.server.Type)
 	}
-
-	if len(s.server.Env) > 0 {
-		lines = append(lines, detailKeyStyle.Render("Env")+detailColonStyle.Render(":"))
-		envNames := make([]string, 0, len(s.server.Env))
-		for k := range s.server.Env {
-			envNames = append(envNames, k)
-		}
-		sort.Strings(envNames)
-		for _, k := range envNames {
-			lines = append(lines,
-				"  "+detailKeyStyle.Render(k)+detailColonStyle.Render(": ")+detailValueStyle.Render(s.server.Env[k]))
-		}
+	if s.status != "" {
+		addLine("Status", s.status)
 	}
 
 	iw := m.innerWidth()
