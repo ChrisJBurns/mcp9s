@@ -227,25 +227,72 @@ func buildArgs(params []toolParam, values []string) map[string]any {
 	return args
 }
 
-// buildCurl generates a curl command for an MCP tools/call JSON-RPC request.
+// buildCurl generates a shell script that performs the full MCP handshake
+// (initialize → initialized notification → tools/call) via curl.
 func buildCurl(serverURL, toolName string, args map[string]any) string {
-	params := map[string]any{
+	callParams := map[string]any{
 		"name": toolName,
 	}
 	if len(args) > 0 {
-		params["arguments"] = args
+		callParams["arguments"] = args
 	}
 
-	body := map[string]any{
+	initBody, _ := json.Marshal(map[string]any{
 		"jsonrpc": "2.0",
 		"id":      1,
+		"method":  "initialize",
+		"params": map[string]any{
+			"protocolVersion": "2025-03-26",
+			"clientInfo": map[string]any{
+				"name":    "mcp9s",
+				"version": "0.1.0",
+			},
+			"capabilities": map[string]any{},
+		},
+	})
+
+	notifyBody, _ := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"method":  "notifications/initialized",
+	})
+
+	callBody, _ := json.MarshalIndent(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      2,
 		"method":  "tools/call",
-		"params":  params,
-	}
+		"params":  callParams,
+	}, "", "  ")
 
-	b, _ := json.MarshalIndent(body, "", "  ")
+	var b strings.Builder
+	b.WriteString("#!/bin/bash\n")
+	b.WriteString(fmt.Sprintf("URL='%s'\n\n", serverURL))
 
-	return fmt.Sprintf("curl -X POST %s \\\n  -H 'Content-Type: application/json' \\\n  -d '%s'", serverURL, string(b))
+	// Step 1: Initialize and capture session ID
+	b.WriteString("# Initialize session\n")
+	b.WriteString(fmt.Sprintf("SESSION=$(curl -s -D - -X POST \"$URL\" \\\n"))
+	b.WriteString("  -H 'Content-Type: application/json' \\\n")
+	b.WriteString("  -H 'Accept: application/json' \\\n")
+	b.WriteString(fmt.Sprintf("  -d '%s' \\\n", string(initBody)))
+	b.WriteString("  | grep -i 'mcp-session-id' | tr -d '\\r' | awk '{print $2}')\n\n")
+
+	b.WriteString("echo \"Session ID: $SESSION\"\n\n")
+
+	// Step 2: Send initialized notification
+	b.WriteString("# Send initialized notification\n")
+	b.WriteString("curl -s -X POST \"$URL\" \\\n")
+	b.WriteString("  -H 'Content-Type: application/json' \\\n")
+	b.WriteString("  -H \"Mcp-Session-Id: $SESSION\" \\\n")
+	b.WriteString(fmt.Sprintf("  -d '%s'\n\n", string(notifyBody)))
+
+	// Step 3: Call tool
+	b.WriteString("# Call tool\n")
+	b.WriteString("curl -s -X POST \"$URL\" \\\n")
+	b.WriteString("  -H 'Content-Type: application/json' \\\n")
+	b.WriteString("  -H 'Accept: application/json' \\\n")
+	b.WriteString("  -H \"Mcp-Session-Id: $SESSION\" \\\n")
+	b.WriteString(fmt.Sprintf("  -d '%s'\n", string(callBody)))
+
+	return b.String()
 }
 
 func stripFragment(url string) string {
