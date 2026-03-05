@@ -15,11 +15,37 @@ type mcpTool struct {
 }
 
 // fetchTools connects to the MCP server at the given URL and returns its tools.
-func fetchTools(url string) ([]mcpTool, error) {
+// It tries Streamable HTTP first, then falls back to SSE if that fails.
+func fetchTools(serverURL string) ([]mcpTool, error) {
+	// Strip URL fragment — it's not sent to the server
+	cleanURL := serverURL
+	if i := strings.Index(cleanURL, "#"); i != -1 {
+		cleanURL = cleanURL[:i]
+	}
+
+	transports := []mcp.Transport{
+		&mcp.StreamableClientTransport{
+			Endpoint:             cleanURL,
+			DisableStandaloneSSE: true,
+			MaxRetries:           -1,
+		},
+		&mcp.SSEClientTransport{Endpoint: cleanURL},
+	}
+
+	var lastErr error
+	for _, transport := range transports {
+		tools, err := tryFetchTools(transport)
+		if err == nil {
+			return tools, nil
+		}
+		lastErr = err
+	}
+	return nil, lastErr
+}
+
+func tryFetchTools(transport mcp.Transport) ([]mcpTool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-
-	transport := pickTransport(url)
 
 	client := mcp.NewClient(&mcp.Implementation{
 		Name:    "mcp9s",
@@ -50,17 +76,4 @@ func fetchTools(url string) ([]mcpTool, error) {
 	}
 
 	return tools, nil
-}
-
-// pickTransport returns the appropriate MCP transport for the given URL.
-// URLs containing "/sse" use the SSE transport; all others use Streamable HTTP.
-func pickTransport(url string) mcp.Transport {
-	if strings.Contains(url, "/sse") {
-		return &mcp.SSEClientTransport{Endpoint: url}
-	}
-	return &mcp.StreamableClientTransport{
-		Endpoint:             url,
-		DisableStandaloneSSE: true,
-		MaxRetries:           -1,
-	}
 }
