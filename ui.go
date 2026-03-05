@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os/exec"
 	"regexp"
 	"strings"
 
@@ -237,6 +238,10 @@ func (m model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.dialogOnOK = true
 			}
 			return m, textinput.Blink
+		}
+	case key.Matches(msg, keys.Copy):
+		if m.requestText != "" {
+			copyToClipboard(m.requestText)
 		}
 	case key.Matches(msg, keys.Command):
 		m.inputMode = inputCommand
@@ -1137,4 +1142,10 @@ func safeGet(sl []string, i int) string {
 		return sl[i]
 	}
 	return ""
+}
+
+func copyToClipboard(text string) {
+	cmd := exec.Command("pbcopy")
+	cmd.Stdin = strings.NewReader(text)
+	_ = cmd.Run()
 }

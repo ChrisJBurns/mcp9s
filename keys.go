@@ -15,6 +15,7 @@ type keyMap struct {
 	Back     key.Binding
 	Quit     key.Binding
 	ForceQ   key.Binding
+	Copy     key.Binding
 }
 
 var keys = keyMap{
@@ -65,6 +66,10 @@ var keys = keyMap{
 	ForceQ: key.NewBinding(
 		key.WithKeys("ctrl+c"),
 	),
+	Copy: key.NewBinding(
+		key.WithKeys("c"),
+		key.WithHelp("c", "Copy request"),
+	),
 }
 
 // hintBindings returns the key hints displayed in the header menu area.
@@ -72,6 +77,8 @@ func hintBindings(detail bool) []key.Binding {
 	if detail {
 		return []key.Binding{
 			keys.Back,
+			keys.Enter,
+			keys.Copy,
 			keys.Quit,
 		}
 	}
