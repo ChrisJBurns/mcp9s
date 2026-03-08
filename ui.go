@@ -54,6 +54,12 @@ type callToolMsg struct {
 	err      error
 }
 
+// serverStatusMsg reports whether a server is reachable.
+type serverStatusMsg struct {
+	name      string
+	reachable bool
+}
+
 type model struct {
 	allServers  []serverEntry
 	filtered    []serverEntry
@@ -109,7 +115,11 @@ func newModel(servers []serverEntry, clientCount int) model {
 }
 
 func (m model) Init() tea.Cmd {
-	return nil
+	var cmds []tea.Cmd
+	for _, s := range m.allServers {
+		cmds = append(cmds, probeServerCmd(s.name, s.server.URL))
+	}
+	return tea.Batch(cmds...)
 }
 
 // ─── Update ─────────────────────────────────────────
@@ -129,6 +139,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.detailTools = msg.tools
 				m.detailSession = msg.session
+			}
+		}
+		return m, nil
+
+	case serverStatusMsg:
+		if msg.reachable {
+			for i := range m.allServers {
+				if m.allServers[i].name == msg.name {
+					m.allServers[i].status = "Running"
+				}
+			}
+			for i := range m.filtered {
+				if m.filtered[i].name == msg.name {
+					m.filtered[i].status = "Running"
+				}
 			}
 		}
 		return m, nil
@@ -445,6 +470,14 @@ func (m model) callToolCmd(tool *mcpTool, args map[string]any) tea.Cmd {
 	}
 }
 
+// probeServerCmd checks if a server is reachable by attempting an MCP connection.
+func probeServerCmd(name, serverURL string) tea.Cmd {
+	return func() tea.Msg {
+		_, err := fetchTools(serverURL)
+		return serverStatusMsg{name: name, reachable: err == nil}
+	}
+}
+
 // execCurlCmd runs the request curl command and returns the output as a callToolMsg.
 func (m model) execCurlCmd() tea.Cmd {
 	curlText := m.requestText
@@ -697,10 +730,10 @@ func (m model) renderTable() string {
 
 	// Column widths proportional to available space
 	nameW := iw * 20 / 100
-	urlW := iw * 40 / 100
-	clientsW := iw * 25 / 100
-	statusW := iw - nameW - urlW - clientsW
-	for _, w := range []*int{&nameW, &urlW, &clientsW, &statusW} {
+	urlW := iw * 35 / 100
+	statusW := iw * 12 / 100
+	clientsW := iw - nameW - urlW - statusW
+	for _, w := range []*int{&nameW, &urlW, &statusW, &clientsW} {
 		if *w < 6 {
 			*w = 6
 		}
@@ -718,8 +751,8 @@ func (m model) renderTable() string {
 	// Header row
 	hdr := tableHeaderStyle.Render(padRight("NAME", nameW)) +
 		tableHeaderStyle.Render(padRight("URL", urlW)) +
-		tableHeaderStyle.Render(padRight("CLIENTS", clientsW)) +
-		tableHeaderStyle.Render(padRight("STATUS", statusW))
+		tableHeaderStyle.Render(padRight("STATUS", statusW)) +
+		tableHeaderStyle.Render(padRight("CLIENTS", clientsW))
 
 	var lines []string
 	lines = append(lines, hdr)
@@ -747,10 +780,18 @@ func (m model) renderTable() string {
 			style = tableSelectedStyle
 		}
 
+		statusStyle := style
+		if s.status == "Running" {
+			statusStyle = lipgloss.NewStyle().Foreground(colorPaleGreen)
+			if i == m.cursor {
+				statusStyle = statusStyle.Background(colorAqua).Foreground(colorGreen)
+			}
+		}
+
 		row := style.Render(padRight(truncate(s.name, nameW), nameW)) +
 			style.Render(padRight(truncate(s.server.URL, urlW), urlW)) +
-			style.Render(padRight(clientsStr, clientsW)) +
-			style.Render(padRight(truncate(s.status, statusW), statusW))
+			statusStyle.Render(padRight(truncate(s.status, statusW), statusW)) +
+			style.Render(padRight(clientsStr, clientsW))
 		lines = append(lines, row)
 	}
 
