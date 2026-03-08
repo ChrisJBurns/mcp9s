@@ -137,11 +137,22 @@ func (m model) renderMenuGrid(bindings []key.Binding) []string {
 		maxRows = len(bindings)
 	}
 
+	// Find the widest key label to align descriptions
+	maxKeyW := 0
+	for _, b := range bindings {
+		h := b.Help()
+		w := lipgloss.Width("<" + h.Key + ">")
+		if w > maxKeyW {
+			maxKeyW = w
+		}
+	}
+
 	grid := make([][]string, maxRows)
 	for i, b := range bindings {
 		row := i % maxRows
 		h := b.Help()
-		cell := menuKeyStyle.Render("<"+h.Key+">") + " " + menuDescStyle.Render(h.Desc)
+		keyStr := menuKeyStyle.Render("<" + h.Key + ">")
+		cell := padRight(keyStr, maxKeyW) + " " + menuDescStyle.Render(h.Desc)
 		grid[row] = append(grid[row], cell)
 	}
 
@@ -230,17 +241,9 @@ func (m model) renderTable() string {
 			style = tableSelectedStyle
 		}
 
-		statusStyle := style
-		if s.Status == "Running" {
-			statusStyle = lipgloss.NewStyle().Foreground(colorPaleGreen)
-			if i == m.cursor {
-				statusStyle = statusStyle.Background(colorAqua).Foreground(colorGreen)
-			}
-		}
-
 		row := style.Render(padRight(truncate(s.Name, nameW), nameW)) +
 			style.Render(padRight(truncate(s.Server.URL, urlW), urlW)) +
-			statusStyle.Render(padRight(truncate(s.Status, statusW), statusW)) +
+			style.Render(padRight(truncate(s.Status, statusW), statusW)) +
 			style.Render(padRight(clientsStr, clientsW))
 		lines = append(lines, row)
 	}

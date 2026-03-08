@@ -8,7 +8,7 @@ var (
 	colorWhite          = lipgloss.Color("#FFFFFF")
 	colorAqua           = lipgloss.Color("#00FFFF")
 	colorOrange         = lipgloss.Color("#FFA500")
-	colorDodgerBlue     = lipgloss.Color("#1E90FF")
+	colorDodgerBlue     = lipgloss.Color("#88CEFA")
 	colorLightSkyBlue   = lipgloss.Color("#87CEFA")
 	colorFuchsia        = lipgloss.Color("#FF00FF")
 	colorPapayaWhip     = lipgloss.Color("#FFEFD5")
@@ -46,11 +46,11 @@ var (
 // Menu / hint bar (in header, center)
 var (
 	menuKeyStyle = lipgloss.NewStyle().
-			Foreground(colorDodgerBlue).
+			Foreground(lipgloss.Color("#196BBE")).
 			Bold(true)
 
 	menuDescStyle = lipgloss.NewStyle().
-			Foreground(colorWhite)
+			Foreground(lipgloss.Color("#828282"))
 
 	menuNumKeyStyle = lipgloss.NewStyle().
 			Foreground(colorFuchsia).
@@ -83,11 +83,11 @@ var (
 				Bold(false)
 
 	tableRowStyle = lipgloss.NewStyle().
-			Foreground(colorAqua)
+			Foreground(colorDodgerBlue)
 
 	tableSelectedStyle = lipgloss.NewStyle().
 				Foreground(colorBlack).
-				Background(colorAqua).
+				Background(colorDodgerBlue).
 				Bold(true)
 )
 
