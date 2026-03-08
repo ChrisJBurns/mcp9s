@@ -47,9 +47,17 @@ Only remote (HTTP/SSE) servers are shown. Local stdio servers are skipped.
 - [Go](https://go.dev/) 1.24+
 - [Task](https://taskfile.dev/) (optional, for build commands)
 
-## Getting Started
+## Installation
 
-### Build
+### go install
+
+```sh
+go install github.com/chrisburns/mcp9s/cmd/mcp9s@latest
+```
+
+This places the `mcp9s` binary in your `$GOPATH/bin` (or `$HOME/go/bin` by default).
+
+### Build from source
 
 ```sh
 task build
