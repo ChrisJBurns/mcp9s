@@ -1,0 +1,17 @@
+version: "3"
+
+tasks:
+  build:
+    desc: Build the mcp9s binary into bin/
+    cmds:
+      - go build -o bin/mcp9s ./cmd/mcp9s/
+    sources:
+      - ./**/*.go
+    generates:
+      - bin/mcp9s
+
+  run:
+    desc: Build and run mcp9s
+    deps: [build]
+    cmds:
+      - ./bin/mcp9s
