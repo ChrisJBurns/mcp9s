@@ -1,7 +1,7 @@
 # mcp9s
 
 <p align="center">
-  <img src="demo.gif" alt="mcp9s demo" width="800">
+  <img src="demo.gif" alt="mcp9s demo" width="1000">
 </p>
 
 A [k9s](https://k9scli.io/)-inspired terminal UI for discovering and interacting with [MCP](https://modelcontextprotocol.io/) (Model Context Protocol) servers.
