@@ -11,6 +11,11 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+var clientImpl = &mcp.Implementation{
+	Name:    "mcp9s",
+	Version: "0.1.0",
+}
+
 // ToolParam describes a single input parameter for a tool.
 type ToolParam struct {
 	Name        string
@@ -61,123 +66,119 @@ type FetchToolsResult struct {
 	Session *Session
 }
 
-// FetchTools connects to the MCP server at the given URL and returns its tools
-// along with the live session.
-func FetchTools(serverURL string) (*FetchToolsResult, error) {
-	cleanURL := StripFragment(serverURL)
-
-	transports := []mcp.Transport{
+// buildTransports returns the ordered list of transports to try for a server URL.
+func buildTransports(serverURL string) []mcp.Transport {
+	return []mcp.Transport{
 		&mcp.StreamableClientTransport{
-			Endpoint:             cleanURL,
+			Endpoint:             serverURL,
 			DisableStandaloneSSE: true,
 			MaxRetries:           -1,
 		},
-		&mcp.SSEClientTransport{Endpoint: cleanURL},
+		&mcp.SSEClientTransport{Endpoint: serverURL},
+	}
+}
+
+// withSession connects to one of the transports and calls fn with the session.
+// It tries each transport in order and returns the first success.
+func withSession(serverURL string, timeout time.Duration, fn func(ctx context.Context, session *mcp.ClientSession) error) error {
+	cleanURL := StripFragment(serverURL)
+	transports := buildTransports(cleanURL)
+
+	var errs []error
+	for _, transport := range transports {
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		client := mcp.NewClient(clientImpl, nil)
+		session, err := client.Connect(ctx, transport, nil)
+		if err != nil {
+			cancel()
+			errs = append(errs, err)
+			continue
+		}
+		err = fn(ctx, session)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		session.Close()
+		errs = append(errs, err)
+	}
+	if len(errs) == 0 {
+		return fmt.Errorf("no transports available")
+	}
+	return errs[len(errs)-1]
+}
+
+// FetchTools connects to the MCP server at the given URL and returns its tools
+// along with the live session. The caller must close the session when done.
+func FetchTools(serverURL string) (*FetchToolsResult, error) {
+	cleanURL := StripFragment(serverURL)
+	transports := buildTransports(cleanURL)
+
+	var errs []error
+	for _, transport := range transports {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		client := mcp.NewClient(clientImpl, nil)
+		session, err := client.Connect(ctx, transport, nil)
+		if err != nil {
+			cancel()
+			errs = append(errs, err)
+			continue
+		}
+
+		var tools []Tool
+		for t, err := range session.Tools(ctx, nil) {
+			if err != nil {
+				session.Close()
+				cancel()
+				errs = append(errs, err)
+				goto nextTransport
+			}
+			tools = append(tools, Tool{
+				Name:        t.Name,
+				Title:       t.Title,
+				Description: t.Description,
+				Params:      extractParams(t.InputSchema),
+			})
+		}
+		cancel()
+		return &FetchToolsResult{Tools: tools, Session: &Session{session: session}}, nil
+	nextTransport:
 	}
 
-	var lastErr error
-	for _, transport := range transports {
-		result, err := tryFetchTools(transport)
-		if err == nil {
-			return result, nil
-		}
-		lastErr = err
+	if len(errs) == 0 {
+		return nil, fmt.Errorf("no transports available")
 	}
-	return nil, lastErr
+	return nil, errs[len(errs)-1]
 }
 
 // CallTool connects to the MCP server and invokes a tool with the given arguments.
 func CallTool(serverURL, toolName string, args map[string]any) (string, error) {
-	cleanURL := StripFragment(serverURL)
-
-	transports := []mcp.Transport{
-		&mcp.StreamableClientTransport{
-			Endpoint:             cleanURL,
-			DisableStandaloneSSE: true,
-			MaxRetries:           -1,
-		},
-		&mcp.SSEClientTransport{Endpoint: cleanURL},
-	}
-
-	var lastErr error
-	for _, transport := range transports {
-		result, err := tryCallTool(transport, toolName, args)
-		if err == nil {
-			return result, nil
-		}
-		lastErr = err
-	}
-	return "", lastErr
-}
-
-func tryFetchTools(transport mcp.Transport) (*FetchToolsResult, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	client := mcp.NewClient(&mcp.Implementation{
-		Name:    "mcp9s",
-		Version: "0.1.0",
-	}, nil)
-
-	session, err := client.Connect(ctx, transport, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	result, err := session.ListTools(ctx, &mcp.ListToolsParams{})
-	if err != nil {
-		session.Close()
-		return nil, err
-	}
-
-	var tools []Tool
-	for _, t := range result.Tools {
-		tools = append(tools, Tool{
-			Name:        t.Name,
-			Title:       t.Title,
-			Description: t.Description,
-			Params:      extractParams(t.InputSchema),
+	var response string
+	err := withSession(serverURL, 30*time.Second, func(ctx context.Context, session *mcp.ClientSession) error {
+		defer session.Close()
+		result, err := session.CallTool(ctx, &mcp.CallToolParams{
+			Name:      toolName,
+			Arguments: args,
 		})
-	}
-
-	return &FetchToolsResult{Tools: tools, Session: &Session{session: session}}, nil
-}
-
-func tryCallTool(transport mcp.Transport, toolName string, args map[string]any) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-
-	client := mcp.NewClient(&mcp.Implementation{
-		Name:    "mcp9s",
-		Version: "0.1.0",
-	}, nil)
-
-	session, err := client.Connect(ctx, transport, nil)
-	if err != nil {
-		return "", err
-	}
-	defer session.Close()
-
-	result, err := session.CallTool(ctx, &mcp.CallToolParams{
-		Name:      toolName,
-		Arguments: args,
-	})
-	if err != nil {
-		return "", err
-	}
-
-	var parts []string
-	for _, c := range result.Content {
-		if tc, ok := c.(*mcp.TextContent); ok {
-			parts = append(parts, tc.Text)
+		if err != nil {
+			return err
 		}
-	}
 
-	response := strings.Join(parts, "\n")
-	if result.IsError {
-		return "", fmt.Errorf("%s", response)
-	}
-	return response, nil
+		var parts []string
+		for _, c := range result.Content {
+			if tc, ok := c.(*mcp.TextContent); ok {
+				parts = append(parts, tc.Text)
+			}
+		}
+
+		resp := strings.Join(parts, "\n")
+		if result.IsError {
+			return fmt.Errorf("%s", resp)
+		}
+		response = resp
+		return nil
+	})
+	return response, err
 }
 
 // extractParams parses JSON Schema input schema into a list of parameters.

@@ -11,9 +11,9 @@ import (
 )
 
 func main() {
-	servers, clientCount := config.DiscoverServers()
+	result := config.DiscoverServers()
 
-	m := tui.NewModel(servers, clientCount)
+	m := tui.NewModel(result.Servers, result.ClientCount, result.Warnings)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error running TUI: %v\n", err)

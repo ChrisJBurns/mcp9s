@@ -59,6 +59,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		m.allServers = msg.servers
 		m.clientCount = msg.clientCount
+		m.warnings = msg.warnings
 		m.applyFilter()
 
 		if cursorName != "" {

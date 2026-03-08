@@ -65,12 +65,14 @@ type refreshTickMsg struct{}
 type refreshResultMsg struct {
 	servers     []config.ServerEntry
 	clientCount int
+	warnings    []string
 }
 
 type model struct {
 	allServers  []config.ServerEntry
 	filtered    []config.ServerEntry
 	clientCount int
+	warnings    []string
 	cursor      int
 	width       int
 	height      int
@@ -107,7 +109,7 @@ type model struct {
 }
 
 // NewModel creates the initial TUI model.
-func NewModel(servers []config.ServerEntry, clientCount int) model {
+func NewModel(servers []config.ServerEntry, clientCount int, warnings []string) model {
 	ti := textinput.New()
 	ti.CharLimit = 128
 	ti.Prompt = ""
@@ -119,6 +121,7 @@ func NewModel(servers []config.ServerEntry, clientCount int) model {
 		allServers:  servers,
 		filtered:    servers,
 		clientCount: clientCount,
+		warnings:    warnings,
 		textInput:   ti,
 	}
 }
@@ -139,8 +142,8 @@ func scheduleRefreshTick() tea.Cmd {
 
 func refreshServersCmd() tea.Cmd {
 	return func() tea.Msg {
-		servers, clientCount := config.DiscoverServers()
-		return refreshResultMsg{servers: servers, clientCount: clientCount}
+		result := config.DiscoverServers()
+		return refreshResultMsg{servers: result.Servers, clientCount: result.ClientCount, warnings: result.Warnings}
 	}
 }
 

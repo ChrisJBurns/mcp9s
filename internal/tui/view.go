@@ -52,10 +52,16 @@ func (m model) View() string {
 // ─── Header ─────────────────────────────────────────
 
 func (m model) renderHeader() string {
+	statusText := "Ready"
+	statusStyle := infoValueStyle
+	if len(m.warnings) > 0 {
+		statusText = fmt.Sprintf("%d warning(s)", len(m.warnings))
+		statusStyle = lipgloss.NewStyle().Foreground(colorDarkOrange)
+	}
 	infoLines := []string{
 		infoLabelStyle.Render("Clients: ") + infoValueStyle.Render(fmt.Sprintf("%d", m.clientCount)),
 		infoLabelStyle.Render("Servers: ") + infoValueStyle.Render(fmt.Sprintf("%d", len(m.allServers))),
-		infoLabelStyle.Render("Status:  ") + infoValueStyle.Render("Ready"),
+		infoLabelStyle.Render("Status:  ") + statusStyle.Render(statusText),
 	}
 
 	hints := hintBindings(m.view == viewDetail)

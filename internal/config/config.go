@@ -84,26 +84,38 @@ var clientDefs = []clientDef{
 	{name: "Continue", path: ".continue/config.yaml", serversKey: "mcpServers", format: fmtYAML, yamlParser: parseContinueConfig},
 }
 
+// DiscoverResult holds the output of DiscoverServers.
+type DiscoverResult struct {
+	Servers     []ServerEntry
+	ClientCount int
+	Warnings    []string
+}
+
 // DiscoverServers scans all known MCP client configs and returns deduplicated server entries.
-func DiscoverServers() ([]ServerEntry, int) {
+func DiscoverServers() DiscoverResult {
 	home := homeDir()
 	if home == "" {
-		return nil, 0
+		return DiscoverResult{Warnings: []string{"could not determine home directory"}}
 	}
 
 	seen := map[string]int{} // server name -> index in result
 	var servers []ServerEntry
+	var warnings []string
 	clientCount := 0
 
 	for _, cd := range clientDefs {
 		fullPath := filepath.Join(home, cd.path)
 		data, err := os.ReadFile(fullPath)
 		if err != nil {
+			if !os.IsNotExist(err) {
+				warnings = append(warnings, fmt.Sprintf("%s: %v", cd.name, err))
+			}
 			continue
 		}
 
 		parsed, err := parseClientConfig(cd, data)
 		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("%s: %v", cd.name, err))
 			continue
 		}
 
@@ -114,8 +126,12 @@ func DiscoverServers() ([]ServerEntry, int) {
 		clientCount++
 
 		for name, srv := range parsed {
-			// Only include remote (SSE/Streamable HTTP) servers
+			// Only include remote (SSE/Streamable HTTP) servers with valid schemes
 			if srv.URL == "" {
+				continue
+			}
+			if !strings.HasPrefix(srv.URL, "http://") && !strings.HasPrefix(srv.URL, "https://") {
+				warnings = append(warnings, fmt.Sprintf("%s: server %q has unsupported URL scheme: %s", cd.name, name, srv.URL))
 				continue
 			}
 			if idx, ok := seen[name]; ok {
@@ -136,7 +152,11 @@ func DiscoverServers() ([]ServerEntry, int) {
 		return servers[i].Name < servers[j].Name
 	})
 
-	return servers, clientCount
+	return DiscoverResult{
+		Servers:     servers,
+		ClientCount: clientCount,
+		Warnings:    warnings,
+	}
 }
 
 // parseClientConfig dispatches to the right parser based on format.

@@ -19,13 +19,33 @@ func truncate(s string, maxW int) string {
 	if maxW <= 0 {
 		return ""
 	}
-	if len(s) <= maxW {
+	if lipgloss.Width(s) <= maxW {
 		return s
 	}
 	if maxW <= 3 {
-		return s[:maxW]
+		var out []rune
+		w := 0
+		for _, r := range s {
+			rw := lipgloss.Width(string(r))
+			if w+rw > maxW {
+				break
+			}
+			out = append(out, r)
+			w += rw
+		}
+		return string(out)
 	}
-	return s[:maxW-3] + "..."
+	var out []rune
+	w := 0
+	for _, r := range s {
+		rw := lipgloss.Width(string(r))
+		if w+rw > maxW-3 {
+			break
+		}
+		out = append(out, r)
+		w += rw
+	}
+	return string(out) + "..."
 }
 
 func padRight(s string, width int) string {
