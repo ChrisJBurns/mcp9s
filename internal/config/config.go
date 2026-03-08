@@ -1,4 +1,4 @@
-package main
+package config
 
 import (
 	"encoding/json"
@@ -12,6 +12,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// MCPServer holds the configuration for a single MCP server.
 type MCPServer struct {
 	Command string            `json:"command"`
 	Args    []string          `json:"args"`
@@ -20,11 +21,12 @@ type MCPServer struct {
 	Type    string            `json:"type"`
 }
 
-type serverEntry struct {
-	name    string
-	server  MCPServer
-	status  string
-	clients []string
+// ServerEntry represents a discovered MCP server with metadata.
+type ServerEntry struct {
+	Name    string
+	Server  MCPServer
+	Status  string
+	Clients []string
 }
 
 // format describes how the config file is structured.
@@ -42,7 +44,6 @@ type clientDef struct {
 	path       string // relative to home dir
 	serversKey string // JSON/YAML key holding the servers map
 	format     format
-	// For YAML configs with non-standard structure
 	yamlParser func(data []byte) (map[string]MCPServer, error)
 }
 
@@ -84,14 +85,14 @@ var clientDefs = []clientDef{
 }
 
 // DiscoverServers scans all known MCP client configs and returns deduplicated server entries.
-func DiscoverServers() ([]serverEntry, int) {
+func DiscoverServers() ([]ServerEntry, int) {
 	home := homeDir()
 	if home == "" {
 		return nil, 0
 	}
 
 	seen := map[string]int{} // server name -> index in result
-	var servers []serverEntry
+	var servers []ServerEntry
 	clientCount := 0
 
 	for _, cd := range clientDefs {
@@ -118,21 +119,21 @@ func DiscoverServers() ([]serverEntry, int) {
 				continue
 			}
 			if idx, ok := seen[name]; ok {
-				servers[idx].clients = append(servers[idx].clients, cd.name)
+				servers[idx].Clients = append(servers[idx].Clients, cd.name)
 			} else {
 				seen[name] = len(servers)
-				servers = append(servers, serverEntry{
-					name:    name,
-					server:  srv,
-					status:  "",
-					clients: []string{cd.name},
+				servers = append(servers, ServerEntry{
+					Name:    name,
+					Server:  srv,
+					Status:  "",
+					Clients: []string{cd.name},
 				})
 			}
 		}
 	}
 
 	sort.Slice(servers, func(i, j int) bool {
-		return servers[i].name < servers[j].name
+		return servers[i].Name < servers[j].Name
 	})
 
 	return servers, clientCount
@@ -165,7 +166,6 @@ func parseJSONServers(data []byte, key string) (map[string]MCPServer, error) {
 		return nil, err
 	}
 
-	// Handle dotted keys
 	parts := strings.Split(key, ".")
 	current := raw
 	for i, part := range parts {
@@ -180,7 +180,6 @@ func parseJSONServers(data []byte, key string) (map[string]MCPServer, error) {
 			}
 			current = next
 		} else {
-			// Final key — parse as servers map
 			return parseServersMap(val)
 		}
 	}
@@ -190,7 +189,6 @@ func parseJSONServers(data []byte, key string) (map[string]MCPServer, error) {
 
 // parseServersMap parses a JSON object where keys are server names and values are server configs.
 func parseServersMap(data json.RawMessage) (map[string]MCPServer, error) {
-	// First try parsing with flexible field names
 	var rawServers map[string]json.RawMessage
 	if err := json.Unmarshal(data, &rawServers); err != nil {
 		return nil, err
@@ -200,7 +198,7 @@ func parseServersMap(data json.RawMessage) (map[string]MCPServer, error) {
 	for name, serverData := range rawServers {
 		srv, err := normalizeServer(serverData)
 		if err != nil {
-			continue // skip malformed entries
+			continue
 		}
 		result[name] = srv
 	}
@@ -210,7 +208,6 @@ func parseServersMap(data json.RawMessage) (map[string]MCPServer, error) {
 
 // normalizeServer parses a server entry, normalizing various URL field names.
 func normalizeServer(data json.RawMessage) (MCPServer, error) {
-	// Parse into a flexible structure
 	var raw struct {
 		Command   string            `json:"command"`
 		Args      []string          `json:"args"`
@@ -232,7 +229,6 @@ func normalizeServer(data json.RawMessage) (MCPServer, error) {
 		Type:    raw.Type,
 	}
 
-	// Normalize URL fields
 	switch {
 	case raw.URL != "":
 		srv.URL = raw.URL
@@ -259,7 +255,6 @@ func parseYAMLServers(data []byte, key string) (map[string]MCPServer, error) {
 		return nil, fmt.Errorf("key %q not found", key)
 	}
 
-	// Re-marshal and unmarshal to MCPServer map
 	b, err := json.Marshal(serversRaw)
 	if err != nil {
 		return nil, err
@@ -268,14 +263,6 @@ func parseYAMLServers(data []byte, key string) (map[string]MCPServer, error) {
 	return parseServersMap(b)
 }
 
-// parseGooseConfig handles Goose's config.yaml format:
-//
-//	extensions:
-//	  server-name:
-//	    type: stdio
-//	    cmd: command
-//	    args: [...]
-//	    env: {...}
 func parseGooseConfig(data []byte) (map[string]MCPServer, error) {
 	var raw struct {
 		Extensions map[string]struct {
@@ -292,26 +279,18 @@ func parseGooseConfig(data []byte) (map[string]MCPServer, error) {
 
 	result := make(map[string]MCPServer, len(raw.Extensions))
 	for name, ext := range raw.Extensions {
-		srv := MCPServer{
+		result[name] = MCPServer{
 			Command: ext.Cmd,
 			Args:    ext.Args,
 			Env:     ext.Env,
 			Type:    ext.Type,
 			URL:     ext.URI,
 		}
-		result[name] = srv
 	}
 
 	return result, nil
 }
 
-// parseContinueConfig handles Continue's config.yaml format:
-//
-//	mcpServers:
-//	  - name: server-name
-//	    command: cmd
-//	    args: [...]
-//	    env: {...}
 func parseContinueConfig(data []byte) (map[string]MCPServer, error) {
 	var raw struct {
 		MCPServers []struct {

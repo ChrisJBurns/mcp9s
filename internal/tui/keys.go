@@ -1,20 +1,20 @@
-package main
+package tui
 
 import "github.com/charmbracelet/bubbles/key"
 
 type keyMap struct {
-	Up       key.Binding
-	Down     key.Binding
-	Top      key.Binding
-	Bottom   key.Binding
-	Describe key.Binding
-	Enter    key.Binding
-	Filter   key.Binding
-	Command  key.Binding
-	Help     key.Binding
-	Back     key.Binding
-	Quit     key.Binding
-	ForceQ   key.Binding
+	Up         key.Binding
+	Down       key.Binding
+	Top        key.Binding
+	Bottom     key.Binding
+	Describe   key.Binding
+	Enter      key.Binding
+	Filter     key.Binding
+	Command    key.Binding
+	Help       key.Binding
+	Back       key.Binding
+	Quit       key.Binding
+	ForceQ     key.Binding
 	Copy       key.Binding
 	Exec       key.Binding
 	ScrollUp   key.Binding
@@ -86,7 +86,6 @@ var keys = keyMap{
 	),
 }
 
-// hintBindings returns the key hints displayed in the header menu area.
 func hintBindings(detail bool) []key.Binding {
 	if detail {
 		return []key.Binding{

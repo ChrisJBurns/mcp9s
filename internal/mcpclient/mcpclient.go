@@ -1,4 +1,4 @@
-package main
+package mcpclient
 
 import (
 	"context"
@@ -11,49 +11,51 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// toolParam describes a single input parameter for a tool.
-type toolParam struct {
+// ToolParam describes a single input parameter for a tool.
+type ToolParam struct {
 	Name        string
 	Type        string
 	Description string
 	Required    bool
 }
 
-// mcpTool is a simplified tool representation for display.
-type mcpTool struct {
+// Tool is a simplified tool representation for display.
+type Tool struct {
 	Name        string
 	Description string
-	Params      []toolParam
+	Params      []ToolParam
 }
 
-// mcpSession wraps a live MCP client session.
-type mcpSession struct {
+// Session wraps a live MCP client session.
+type Session struct {
 	session *mcp.ClientSession
 }
 
-func (s *mcpSession) ID() string {
+// ID returns the session identifier.
+func (s *Session) ID() string {
 	if s == nil || s.session == nil {
 		return ""
 	}
 	return s.session.ID()
 }
 
-func (s *mcpSession) Close() {
+// Close terminates the session.
+func (s *Session) Close() {
 	if s != nil && s.session != nil {
 		s.session.Close()
 	}
 }
 
-// fetchToolsResult holds the tools and live session from a successful fetch.
-type fetchToolsResult struct {
-	tools   []mcpTool
-	session *mcpSession
+// FetchToolsResult holds the tools and live session from a successful fetch.
+type FetchToolsResult struct {
+	Tools   []Tool
+	Session *Session
 }
 
-// fetchTools connects to the MCP server at the given URL and returns its tools
-// along with the session ID from the initialized connection.
-func fetchTools(serverURL string) (*fetchToolsResult, error) {
-	cleanURL := stripFragment(serverURL)
+// FetchTools connects to the MCP server at the given URL and returns its tools
+// along with the live session.
+func FetchTools(serverURL string) (*FetchToolsResult, error) {
+	cleanURL := StripFragment(serverURL)
 
 	transports := []mcp.Transport{
 		&mcp.StreamableClientTransport{
@@ -75,9 +77,9 @@ func fetchTools(serverURL string) (*fetchToolsResult, error) {
 	return nil, lastErr
 }
 
-// callTool connects to the MCP server and invokes a tool with the given arguments.
-func callTool(serverURL, toolName string, args map[string]any) (string, error) {
-	cleanURL := stripFragment(serverURL)
+// CallTool connects to the MCP server and invokes a tool with the given arguments.
+func CallTool(serverURL, toolName string, args map[string]any) (string, error) {
+	cleanURL := StripFragment(serverURL)
 
 	transports := []mcp.Transport{
 		&mcp.StreamableClientTransport{
@@ -99,7 +101,7 @@ func callTool(serverURL, toolName string, args map[string]any) (string, error) {
 	return "", lastErr
 }
 
-func tryFetchTools(transport mcp.Transport) (*fetchToolsResult, error) {
+func tryFetchTools(transport mcp.Transport) (*FetchToolsResult, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -119,21 +121,20 @@ func tryFetchTools(transport mcp.Transport) (*fetchToolsResult, error) {
 		return nil, err
 	}
 
-	var tools []mcpTool
+	var tools []Tool
 	for _, t := range result.Tools {
 		name := t.Name
 		if t.Title != "" {
 			name = t.Title
 		}
-		tools = append(tools, mcpTool{
+		tools = append(tools, Tool{
 			Name:        name,
 			Description: t.Description,
 			Params:      extractParams(t.InputSchema),
 		})
 	}
 
-	// Session is kept open — caller must close it when done
-	return &fetchToolsResult{tools: tools, session: &mcpSession{session: session}}, nil
+	return &FetchToolsResult{Tools: tools, Session: &Session{session: session}}, nil
 }
 
 func tryCallTool(transport mcp.Transport, toolName string, args map[string]any) (string, error) {
@@ -174,7 +175,7 @@ func tryCallTool(transport mcp.Transport, toolName string, args map[string]any) 
 }
 
 // extractParams parses JSON Schema input schema into a list of parameters.
-func extractParams(schema any) []toolParam {
+func extractParams(schema any) []ToolParam {
 	m, ok := schema.(map[string]any)
 	if !ok {
 		return nil
@@ -185,7 +186,6 @@ func extractParams(schema any) []toolParam {
 		return nil
 	}
 
-	// Build required set
 	requiredSet := map[string]bool{}
 	if req, ok := m["required"].([]any); ok {
 		for _, r := range req {
@@ -195,9 +195,9 @@ func extractParams(schema any) []toolParam {
 		}
 	}
 
-	var params []toolParam
+	var params []ToolParam
 	for name, val := range props {
-		p := toolParam{Name: name, Required: requiredSet[name]}
+		p := ToolParam{Name: name, Required: requiredSet[name]}
 		if propMap, ok := val.(map[string]any); ok {
 			if t, ok := propMap["type"].(string); ok {
 				p.Type = t
@@ -210,7 +210,6 @@ func extractParams(schema any) []toolParam {
 	}
 
 	sort.Slice(params, func(i, j int) bool {
-		// Required params first, then alphabetical
 		if params[i].Required != params[j].Required {
 			return params[i].Required
 		}
@@ -220,8 +219,8 @@ func extractParams(schema any) []toolParam {
 	return params
 }
 
-// buildArgs converts string inputs to typed values based on param types.
-func buildArgs(params []toolParam, values []string) map[string]any {
+// BuildArgs converts string inputs to typed values based on param types.
+func BuildArgs(params []ToolParam, values []string) map[string]any {
 	args := make(map[string]any)
 	for i, p := range params {
 		if i >= len(values) {
@@ -234,8 +233,7 @@ func buildArgs(params []toolParam, values []string) map[string]any {
 
 		switch p.Type {
 		case "number", "integer":
-			var num json.Number
-			num = json.Number(val)
+			num := json.Number(val)
 			if n, err := num.Int64(); err == nil {
 				args[p.Name] = n
 			} else if f, err := num.Float64(); err == nil {
@@ -252,9 +250,8 @@ func buildArgs(params []toolParam, values []string) map[string]any {
 	return args
 }
 
-// buildCurl generates a single curl command for an MCP tools/call request,
-// using the session ID from the already-initialized connection.
-func buildCurl(serverURL, sessionID, toolName string, args map[string]any) string {
+// BuildCurl generates a single curl command for an MCP tools/call request.
+func BuildCurl(serverURL, sessionID, toolName string, args map[string]any) string {
 	params := map[string]any{
 		"name": toolName,
 	}
@@ -281,7 +278,8 @@ func buildCurl(serverURL, sessionID, toolName string, args map[string]any) strin
 	return b.String()
 }
 
-func stripFragment(url string) string {
+// StripFragment removes the URL fragment (everything after #).
+func StripFragment(url string) string {
 	if i := strings.Index(url, "#"); i != -1 {
 		return url[:i]
 	}
