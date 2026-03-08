@@ -1,5 +1,9 @@
 # mcp9s
 
+<p align="center">
+  <img src="demo.gif" alt="mcp9s demo" width="800">
+</p>
+
 A [k9s](https://k9scli.io/)-inspired terminal UI for discovering and interacting with [MCP](https://modelcontextprotocol.io/) (Model Context Protocol) servers.
 
 mcp9s automatically discovers remote MCP servers from all popular AI coding clients installed on your system, shows their live status, and lets you browse tools, generate curl requests, and execute them — all from the terminal.
