@@ -304,7 +304,7 @@ func (m model) renderDetail() string {
 				style = tableSelectedStyle
 			}
 			topLines = append(topLines,
-				style.Render(padRight(truncate(t.Name, nameColW), nameColW))+
+				style.Render(padRight(truncate(t.DisplayName(), nameColW), nameColW))+
 					style.Render(padRight(truncate(t.Description, descColW), descColW)))
 		}
 	}
@@ -383,7 +383,7 @@ func (m model) renderCrumbs() string {
 	if m.showToolDialog && m.dialogTool != nil {
 		crumbs = crumbStyle.Render("servers") + " " +
 			crumbStyle.Render(m.detailServerNm) + " " +
-			crumbActiveStyle.Render(m.dialogTool.Name)
+			crumbActiveStyle.Render(m.dialogTool.DisplayName())
 	} else if m.view == viewDetail && m.cursor < len(m.filtered) {
 		crumbs = crumbStyle.Render("servers") + " " +
 			crumbActiveStyle.Render(m.filtered[m.cursor].Name)
@@ -422,7 +422,7 @@ func (m model) renderToolDialog() string {
 
 	title := tableTitleStyle.Render("Call Tool") +
 		lipgloss.NewStyle().Foreground(colorAqua).Render("[") +
-		tableTitleCountStyle.Render(tool.Name) +
+		tableTitleCountStyle.Render(tool.DisplayName()) +
 		lipgloss.NewStyle().Foreground(colorAqua).Render("]")
 
 	var lines []string

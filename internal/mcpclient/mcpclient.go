@@ -21,9 +21,18 @@ type ToolParam struct {
 
 // Tool is a simplified tool representation for display.
 type Tool struct {
-	Name        string
+	Name        string // wire-protocol identifier used in tools/call
+	Title       string // human-readable display name (may differ from Name)
 	Description string
 	Params      []ToolParam
+}
+
+// DisplayName returns the Title if set, otherwise the Name.
+func (t Tool) DisplayName() string {
+	if t.Title != "" {
+		return t.Title
+	}
+	return t.Name
 }
 
 // Session wraps a live MCP client session.
@@ -123,12 +132,9 @@ func tryFetchTools(transport mcp.Transport) (*FetchToolsResult, error) {
 
 	var tools []Tool
 	for _, t := range result.Tools {
-		name := t.Name
-		if t.Title != "" {
-			name = t.Title
-		}
 		tools = append(tools, Tool{
-			Name:        name,
+			Name:        t.Name,
+			Title:       t.Title,
 			Description: t.Description,
 			Params:      extractParams(t.InputSchema),
 		})
@@ -250,7 +256,52 @@ func BuildArgs(params []ToolParam, values []string) map[string]any {
 	return args
 }
 
-// BuildCurl generates a single curl command for an MCP tools/call request.
+// CurlArgs holds the structured components of a curl request for safe execution.
+type CurlArgs struct {
+	URL       string
+	Headers   []string
+	Body      []byte
+	SessionID string
+}
+
+// BuildCurlArgs returns structured curl arguments for safe execution via exec.Command.
+func BuildCurlArgs(serverURL, sessionID, toolName string, args map[string]any) CurlArgs {
+	params := map[string]any{
+		"name": toolName,
+	}
+	if len(args) > 0 {
+		params["arguments"] = args
+	}
+
+	body, _ := json.Marshal(map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "tools/call",
+		"params":  params,
+	})
+
+	return CurlArgs{
+		URL:       serverURL,
+		Headers:   []string{"Content-Type: application/json", "Accept: application/json, text/event-stream"},
+		Body:      body,
+		SessionID: sessionID,
+	}
+}
+
+// ExecArgs returns the argument list for exec.Command("curl", ...).
+func (c CurlArgs) ExecArgs() []string {
+	args := []string{"-s", "-X", "POST", c.URL}
+	for _, h := range c.Headers {
+		args = append(args, "-H", h)
+	}
+	if c.SessionID != "" {
+		args = append(args, "-H", "Mcp-Session-Id: "+c.SessionID)
+	}
+	args = append(args, "-d", string(c.Body))
+	return args
+}
+
+// BuildCurl generates a display-friendly curl command string (not for execution).
 func BuildCurl(serverURL, sessionID, toolName string, args map[string]any) string {
 	params := map[string]any{
 		"name": toolName,

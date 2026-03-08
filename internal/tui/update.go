@@ -74,18 +74,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(probeCmds...)
 
 	case serverStatusMsg:
+		status := ""
 		if msg.reachable {
-			for i := range m.allServers {
-				if m.allServers[i].Name == msg.name {
-					m.allServers[i].Status = "Running"
-				}
-			}
-			for i := range m.filtered {
-				if m.filtered[i].Name == msg.name {
-					m.filtered[i].Status = "Running"
-				}
+			status = "Running"
+		}
+		for i := range m.allServers {
+			if m.allServers[i].Name == msg.name {
+				m.allServers[i].Status = status
 			}
 		}
+		m.applyFilter()
 		return m, nil
 
 	case callToolMsg:
@@ -162,6 +160,7 @@ func (m model) updateDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.responseLines = nil
 		m.responseScroll = 0
 		m.requestText = ""
+		m.curlArgs = nil
 		if m.detailSession != nil {
 			m.detailSession.Close()
 			m.detailSession = nil
@@ -260,7 +259,10 @@ func (m model) updateToolDialog(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.cursor < len(m.filtered) {
 				serverURL = mcpclient.StripFragment(m.filtered[m.cursor].Server.URL)
 			}
-			m.requestText = mcpclient.BuildCurl(serverURL, m.detailSession.ID(), m.dialogTool.Name, args)
+			sessionID := m.detailSession.ID()
+			m.requestText = mcpclient.BuildCurl(serverURL, sessionID, m.dialogTool.Name, args)
+			ca := mcpclient.BuildCurlArgs(serverURL, sessionID, m.dialogTool.Name, args)
+			m.curlArgs = &ca
 			m.showToolDialog = false
 			return m, nil
 		}

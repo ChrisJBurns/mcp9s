@@ -99,6 +99,7 @@ type model struct {
 
 	// Request/Response panels
 	requestText     string
+	curlArgs        *mcpclient.CurlArgs
 	responseText    string
 	responseLoading bool
 	responseScroll  int
@@ -167,15 +168,21 @@ func (m model) callToolCmd(tool *mcpclient.Tool, args map[string]any) tea.Cmd {
 
 func probeServerCmd(name, serverURL string) tea.Cmd {
 	return func() tea.Msg {
-		_, err := mcpclient.FetchTools(serverURL)
+		result, err := mcpclient.FetchTools(serverURL)
+		if result != nil && result.Session != nil {
+			result.Session.Close()
+		}
 		return serverStatusMsg{name: name, reachable: err == nil}
 	}
 }
 
 func (m model) execCurlCmd() tea.Cmd {
-	curlText := m.requestText
+	curlArgs := m.curlArgs
 	return func() tea.Msg {
-		out, err := exec.Command("sh", "-c", curlText).CombinedOutput()
+		if curlArgs == nil {
+			return callToolMsg{err: fmt.Errorf("no curl arguments")}
+		}
+		out, err := exec.Command("curl", curlArgs.ExecArgs()...).CombinedOutput()
 		if err != nil {
 			return callToolMsg{err: fmt.Errorf("%s: %s", err, string(out))}
 		}
