@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -58,6 +59,15 @@ type callToolMsg struct {
 type serverStatusMsg struct {
 	name      string
 	reachable bool
+}
+
+// refreshTickMsg triggers a re-scan of config files.
+type refreshTickMsg struct{}
+
+// refreshResultMsg carries the results of a config re-scan.
+type refreshResultMsg struct {
+	servers     []serverEntry
+	clientCount int
 }
 
 type model struct {
@@ -115,11 +125,24 @@ func newModel(servers []serverEntry, clientCount int) model {
 }
 
 func (m model) Init() tea.Cmd {
-	var cmds []tea.Cmd
+	cmds := []tea.Cmd{scheduleRefreshTick()}
 	for _, s := range m.allServers {
 		cmds = append(cmds, probeServerCmd(s.name, s.server.URL))
 	}
 	return tea.Batch(cmds...)
+}
+
+func scheduleRefreshTick() tea.Cmd {
+	return tea.Tick(2*time.Second, func(time.Time) tea.Msg {
+		return refreshTickMsg{}
+	})
+}
+
+func refreshServersCmd() tea.Cmd {
+	return func() tea.Msg {
+		servers, clientCount := DiscoverServers()
+		return refreshResultMsg{servers: servers, clientCount: clientCount}
+	}
 }
 
 // ─── Update ─────────────────────────────────────────
@@ -142,6 +165,57 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, nil
+
+	case refreshTickMsg:
+		return m, refreshServersCmd()
+
+	case refreshResultMsg:
+		// Build a map of existing statuses to preserve
+		statusMap := make(map[string]string)
+		for _, s := range m.allServers {
+			if s.status != "" {
+				statusMap[s.name] = s.status
+			}
+		}
+
+		// Find new servers that need probing
+		oldNames := make(map[string]bool)
+		for _, s := range m.allServers {
+			oldNames[s.name] = true
+		}
+
+		var probeCmds []tea.Cmd
+		for i := range msg.servers {
+			if status, ok := statusMap[msg.servers[i].name]; ok {
+				msg.servers[i].status = status
+			} else {
+				// New server — probe it
+				probeCmds = append(probeCmds, probeServerCmd(msg.servers[i].name, msg.servers[i].server.URL))
+			}
+		}
+
+		// Preserve cursor position by name if possible
+		var cursorName string
+		if m.cursor < len(m.filtered) {
+			cursorName = m.filtered[m.cursor].name
+		}
+
+		m.allServers = msg.servers
+		m.clientCount = msg.clientCount
+		m.applyFilter()
+
+		// Restore cursor
+		if cursorName != "" {
+			for i, s := range m.filtered {
+				if s.name == cursorName {
+					m.cursor = i
+					break
+				}
+			}
+		}
+
+		probeCmds = append(probeCmds, scheduleRefreshTick())
+		return m, tea.Batch(probeCmds...)
 
 	case serverStatusMsg:
 		if msg.reachable {
