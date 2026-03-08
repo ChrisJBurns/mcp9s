@@ -52,7 +52,7 @@ Only remote (HTTP/SSE) servers are shown. Local stdio servers are skipped.
 ### go install
 
 ```sh
-go install github.com/chrisburns/mcp9s/cmd/mcp9s@latest
+go install github.com/chrisjburns/mcp9s/cmd/mcp9s@latest
 ```
 
 This places the `mcp9s` binary in your `$GOPATH/bin` (or `$HOME/go/bin` by default).

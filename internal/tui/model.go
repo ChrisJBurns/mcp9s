@@ -9,8 +9,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"github.com/chrisburns/mcp9s/internal/config"
-	"github.com/chrisburns/mcp9s/internal/mcpclient"
+	"github.com/chrisjburns/mcp9s/internal/config"
+	"github.com/chrisjburns/mcp9s/internal/mcpclient"
 )
 
 const logo = ` ___  ___  ___ ___  ___  ___

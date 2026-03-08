@@ -1,4 +1,4 @@
-module github.com/chrisburns/mcp9s
+module github.com/chrisjburns/mcp9s
 
 go 1.24.2
 
